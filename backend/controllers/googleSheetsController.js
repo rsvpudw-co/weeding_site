@@ -27,11 +27,24 @@ export const googleSheetsController = {
       const { id } = req.params;
       const { sheet_url, sheet_id } = req.body || {};
 
-      const wedding = await WeddingModel.getById(id);
+      let wedding = await WeddingModel.getById(id);
+      if (!wedding && id) {
+        const altId = id.startsWith("wedding_") ? id.replace("wedding_", "") : `wedding_${id}`;
+        wedding = await WeddingModel.getById(altId);
+      }
+      if (!wedding && (sheet_url || sheet_id)) {
+        wedding = await WeddingModel.create({
+          id,
+          groom_name: "Groom",
+          bride_name: "Bride",
+          google_sheet_url: sheet_url || null,
+          google_sheet_id: sheet_id || GoogleSheetsService.extractSheetId(sheet_url),
+        });
+      }
       if (!wedding) {
         return res.status(404).json({
           success: false,
-          message: "Wedding not found",
+          message: `Wedding '${id}' not found in database.`,
         });
       }
 
@@ -43,23 +56,32 @@ export const googleSheetsController = {
         });
       }
 
-      const syncResult = await GoogleSheetsService.syncFromGoogleSheet(id, targetUrlOrId);
+      // If wedding didn't have this URL saved, save it now!
+      if (sheet_url && (!wedding.google_sheet_url || wedding.google_sheet_url !== sheet_url)) {
+        const extractedId = GoogleSheetsService.extractSheetId(sheet_url);
+        await WeddingModel.update(wedding.id, {
+          google_sheet_url: sheet_url,
+          google_sheet_id: extractedId || wedding.google_sheet_id,
+        });
+      }
+
+      const syncResult = await GoogleSheetsService.syncFromGoogleSheet(wedding.id, targetUrlOrId);
 
       // Fetch freshly updated guest list and wedding stats
-      const updatedGuests = await GuestModel.getAll({ weddingId: id });
-      const stats = await GuestModel.getStatistics(id);
-      const weddingRecord = await WeddingModel.getById(id);
+      const updatedGuests = await GuestModel.getAll({ weddingId: wedding.id });
+      const stats = await GuestModel.getStatistics(wedding.id);
+      const weddingRecord = await WeddingModel.getById(wedding.id);
 
       // Broadcast WebSocket mutation event for live sync
       const io = req.app.get("io");
       broadcastDataChange(io, {
         event: "guests_updated",
-        weddingId: id,
+        weddingId: wedding.id,
         payload: { action: "sheet_sync", stats, count: updatedGuests.length },
       });
       broadcastDataChange(io, {
         event: "weddings_updated",
-        weddingId: id,
+        weddingId: wedding.id,
         payload: { action: "sheet_sync", wedding: weddingRecord },
       });
 
@@ -201,12 +223,7 @@ export const googleSheetsController = {
           syncResult = await GoogleSheetsService.syncFromGoogleSheet(id, extractedId);
           console.log(`✅ Automatically imported ${syncResult.totalRows} guests from linked Google Sheet!`);
         } catch (syncErr) {
-          console.warn("⚠️ Note on auto-import from linked sheet (will try initializing):", syncErr.message);
-          try {
-            await GoogleSheetsService.initializeAndPushToSheet(id, extractedId);
-          } catch (initErr) {
-            console.warn("⚠️ Note on auto-populating linked sheet:", initErr.message);
-          }
+          console.warn("⚠️ Note on auto-import from linked sheet:", syncErr.message);
         }
       }
 

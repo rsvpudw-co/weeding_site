@@ -64,7 +64,8 @@ export default function GoogleSheetModal({
     setPermissionHelp(null);
 
     try {
-      const result = await api.syncGoogleSheet(wedding.id, wedding.google_sheet_url);
+      const targetUrl = (customSheetUrl && customSheetUrl.trim()) || wedding.google_sheet_url;
+      const result = await api.syncGoogleSheet(wedding.id, targetUrl);
       setSyncResult(result);
       if (onSyncSuccess) {
         onSyncSuccess(result);

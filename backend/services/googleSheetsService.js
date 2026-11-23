@@ -195,6 +195,62 @@ export const GoogleSheetsService = {
     }
   },
 
+  // 2b. Helper to retrieve configured Google Auth Service Account client email
+  async getGoogleAuthClientEmail() {
+    try {
+      const { auth } = await this.getGoogleAuth();
+      if (auth) {
+        const client = await auth.getClient();
+        return (
+          client.email ||
+          client.credentials?.client_email ||
+          "manish@marriage-data-510707.iam.gserviceaccount.com"
+        );
+      }
+    } catch (e) {}
+    return "manish@marriage-data-510707.iam.gserviceaccount.com";
+  },
+
+  // 2c. Helper to dynamically detect the true header row index from tabular sheet data
+  findHeaderRowIndex(rows) {
+    if (!rows || rows.length === 0) return 0;
+    const isGuestCol = (c) => {
+      const s = String(c || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      return (
+        s === "guestname" ||
+        s === "name" ||
+        s === "fullname" ||
+        s === "guest" ||
+        s === "guests" ||
+        s === "invitee" ||
+        s.includes("guestname") ||
+        s === "contact" ||
+        s === "phone" ||
+        s === "mobile" ||
+        s === "side" ||
+        s === "relation" ||
+        s === "rsvp" ||
+        s === "rsvpstatus" ||
+        s === "srno" ||
+        s === "sr" ||
+        s === "sno"
+      );
+    };
+
+    const maxScan = Math.min(rows.length, 12);
+    for (let i = 0; i < maxScan; i++) {
+      const row = rows[i];
+      if (!Array.isArray(row) || row.length === 0) continue;
+      const matchCount = row.filter(isGuestCol).length;
+      // If at least 2 guest-related columns match, or 1 strong match with >= 2 non-empty cells
+      if (matchCount >= 2) return i;
+      const cleaned = row.map((c) => String(c || "").toLowerCase().replace(/[^a-z0-9]/g, ""));
+      const hasStrong = cleaned.some((c) => c === "guestname" || c === "fullname" || c === "guest_name" || (c === "name" && row.filter(Boolean).length >= 3));
+      if (hasStrong) return i;
+    }
+    return 0;
+  },
+
   // 3. Extract Spreadsheet ID from URL or return ID as-is
   extractSheetId(urlOrId) {
     if (!urlOrId) return null;
@@ -533,11 +589,14 @@ export const GoogleSheetsService = {
 
     if (lines.length < 2) return [];
 
-    const headers = lines[0].map((h) => h.toLowerCase().trim().replace(/[^a-z0-9]/g, "_"));
+    const headerIdx = this.findHeaderRowIndex(lines);
+    const rawHeaders = lines[headerIdx] || lines[0];
+    const headers = rawHeaders.map((h) => h.toLowerCase().trim().replace(/[^a-z0-9]/g, "_"));
     const rows = [];
 
-    for (let i = 1; i < lines.length; i++) {
+    for (let i = headerIdx + 1; i < lines.length; i++) {
       const row = lines[i];
+      if (!row || row.length === 0 || row.every((c) => !c || String(c).trim() === "")) continue;
       const rowObj = {};
       headers.forEach((header, index) => {
         rowObj[header] = row[index] !== undefined ? row[index] : "";
@@ -579,10 +638,39 @@ export const GoogleSheetsService = {
     };
 
     const guestName =
-      getVal("guest_name", "guestname", "name", "guest", "full_name") || "Guest";
-    const srNoRaw = getVal("sr_no", "srno", "sr", "serial_no", "id", "#");
+      getVal(
+        "guest_name",
+        "guestname",
+        "name",
+        "full_name",
+        "fullname",
+        "name_of_guest",
+        "guest",
+        "guests",
+        "guest_names",
+        "family_name",
+        "person_name",
+        "invitee",
+        "invitees",
+        "member_name",
+        "contact_name",
+        "attendee"
+      ) || "";
+    const srNoRaw = getVal("sr_no", "srno", "sr", "serial_no", "serial", "s_no", "sno", "id", "#");
     const srNo = srNoRaw && !isNaN(Number(srNoRaw)) ? Number(srNoRaw) : defaultSrNo;
-    const contact = getVal("contact", "phone", "mobile", "contact_no", "phone_number") || "";
+    const contact =
+      getVal(
+        "contact",
+        "phone",
+        "mobile",
+        "contact_no",
+        "phone_number",
+        "mobile_no",
+        "whatsapp",
+        "cell",
+        "contact_number",
+        "tel"
+      ) || "";
     const relation =
       getVal(
         "relation",
@@ -590,7 +678,8 @@ export const GoogleSheetsService = {
         "relation_to_couple",
         "relation_to_bride_groom",
         "guest_relation",
-        "relative"
+        "relative",
+        "relation_type"
       ) || null;
 
     // Side normalization supporting single/combined column, Indian wedding terms, and abbreviations
@@ -607,7 +696,9 @@ export const GoogleSheetsService = {
       "affiliation",
       "category",
       "ladka_ladki",
-      "ladki_ladka"
+      "ladki_ladka",
+      "team",
+      "paksh"
     );
 
     let side = null;
@@ -931,9 +1022,10 @@ export const GoogleSheetsService = {
 
             const values = res.data.values;
             if (values && values.length >= 2) {
-              const rawHeaders = values[0];
+              const headerIdx = this.findHeaderRowIndex(values);
+              const rawHeaders = values[headerIdx] || values[0];
               const headers = rawHeaders.map((h) => String(h || "").toLowerCase().trim().replace(/[^a-z0-9]/g, "_"));
-              for (let i = 1; i < values.length; i++) {
+              for (let i = headerIdx + 1; i < values.length; i++) {
                 const rowValues = values[i];
                 if (!rowValues || rowValues.length === 0 || rowValues.every((v) => !v || String(v).trim() === "")) continue;
                 const rowObj = { _tabDefaultSide: tabDefaultSide };
@@ -1071,17 +1163,31 @@ export const GoogleSheetsService = {
       );
     };
 
-    const isHeaderRow = (name) => {
+    const isHeaderRow = (name, rawRow = {}) => {
       if (!name) return true;
       const clean = name.toLowerCase().replace(/[^a-z0-9]/g, "");
-      return (
+      if (
         clean === "guestname" ||
-        clean === "guest" ||
-        clean === "name" ||
+        clean === "guestnames" ||
         clean === "fullname" ||
         clean === "srno" ||
-        clean === "serialno"
-      );
+        clean === "serialno" ||
+        clean === "nameofguest" ||
+        clean === "guest_name"
+      ) {
+        return true;
+      }
+      // If name is simply 'guest' or 'name', only treat as header if other cells also contain header keywords
+      if (clean === "guest" || clean === "name") {
+        const otherValues = Object.values(rawRow).map((v) =>
+          String(v || "").toLowerCase().replace(/[^a-z0-9]/g, "")
+        );
+        const looksLikeHeader = otherValues.some((v) =>
+          ["contact", "side", "rsvp", "phone", "mobile", "srno", "relation"].includes(v)
+        );
+        if (looksLikeHeader) return true;
+      }
+      return false;
     };
 
     let nextSr = 1;
@@ -1095,7 +1201,7 @@ export const GoogleSheetsService = {
       if (!rawName) continue;
 
       // Skip repeated header rows
-      if (isHeaderRow(rawName)) continue;
+      if (isHeaderRow(rawName, rawRow)) continue;
 
       // Detect section headers (e.g., "Bride Side", "Groom Side", "Ladkiwale")
       if (isSectionHeader(rawName)) {
@@ -1194,10 +1300,14 @@ export const GoogleSheetsService = {
     }
 
     // Update wedding last_synced timestamp in DB
-    await pool.query(
-      "UPDATE weddings SET google_sheet_last_synced = NOW(), google_sheet_sync_status = 'synced' WHERE id = $1",
-      [weddingId]
-    );
+    try {
+      await pool.query(
+        "UPDATE weddings SET google_sheet_last_synced = NOW(), google_sheet_sync_status = 'synced' WHERE id = $1",
+        [weddingId]
+      );
+    } catch (wErr) {
+      console.warn("Notice: could not update wedding last_synced timestamp:", wErr.message);
+    }
 
     return {
       success: true,

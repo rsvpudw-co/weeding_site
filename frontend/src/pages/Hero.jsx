@@ -93,7 +93,7 @@ export default function Hero() {
       const next = !prev;
       try {
         localStorage.setItem("wedding_sidebar_collapsed", String(next));
-      } catch (e) {}
+      } catch (e) { }
       return next;
     });
   }, []);
@@ -211,7 +211,7 @@ export default function Hero() {
     if (selectedWedding?.id && selectedWedding.id !== "all") {
       try {
         sessionStorage.setItem("manish_selected_wedding_id", selectedWedding.id);
-      } catch (e) {}
+      } catch (e) { }
     }
   }, [selectedWedding]);
 
@@ -261,14 +261,14 @@ export default function Hero() {
         weddings.find((w) => w.id === user.wedding_id) ||
         (user.assigned_wedding_name
           ? {
-              id: user.wedding_id,
-              groom_name: user.assigned_wedding_name.split("&")[0]?.trim() || "Groom",
-              bride_name: user.assigned_wedding_name.split("&")[1]?.trim() || "Bride",
-              wedding_date: user.wedding_date || "",
-              venue: user.venue || "",
-              city: user.city || "",
-              cover_theme: "emerald",
-            }
+            id: user.wedding_id,
+            groom_name: user.assigned_wedding_name.split("&")[0]?.trim() || "Groom",
+            bride_name: user.assigned_wedding_name.split("&")[1]?.trim() || "Bride",
+            wedding_date: user.wedding_date || "",
+            venue: user.venue || "",
+            city: user.city || "",
+            cover_theme: "emerald",
+          }
           : null);
 
       if (matched) {
@@ -388,12 +388,20 @@ export default function Hero() {
 
     joinActiveRooms();
 
+    const isMatchingWedding = (eventWeddingId, currentId) => {
+      if (!eventWeddingId || !currentId || currentId === "all") return true;
+      if (eventWeddingId === currentId) return true;
+      const cleanEvent = String(eventWeddingId).replace(/^wedding_/, "");
+      const cleanCurr = String(currentId).replace(/^wedding_/, "");
+      return cleanEvent === cleanCurr;
+    };
+
     let guestUpdateTimer = null;
     const handleGuestsUpdated = (payload) => {
-      const eventWeddingId = payload?.wedding_id;
+      const eventWeddingId = payload?.wedding_id || payload?.weddingId;
       const currentId = activeWeddingRef.current;
       // Only refresh if mutation belongs to current wedding or viewing all
-      if (!eventWeddingId || !currentId || currentId === "all" || eventWeddingId === currentId) {
+      if (isMatchingWedding(eventWeddingId, currentId)) {
         if (payload?.guest) {
           setGuests((prev) =>
             prev.map((g) => (g.id === payload.guest.id ? { ...g, ...payload.guest } : g))
@@ -411,9 +419,9 @@ export default function Hero() {
     };
 
     const handleCallLogsUpdated = (payload) => {
-      const eventWeddingId = payload?.wedding_id;
+      const eventWeddingId = payload?.wedding_id || payload?.weddingId;
       const currentId = activeWeddingRef.current;
-      if (!eventWeddingId || !currentId || currentId === "all" || eventWeddingId === currentId) {
+      if (isMatchingWedding(eventWeddingId, currentId)) {
         if (payload?.guest) {
           setGuests((prev) =>
             prev.map((g) => (g.id === payload.guest.id ? { ...g, ...payload.guest } : g))
@@ -480,11 +488,11 @@ export default function Hero() {
           return prev.map((t) =>
             t.id === wedding.id
               ? {
-                  ...t,
-                  wedding,
-                  title: `${wedding.groom_name} & ${wedding.bride_name}`,
-                  count: wedding.total_guests,
-                }
+                ...t,
+                wedding,
+                title: `${wedding.groom_name} & ${wedding.bride_name}`,
+                count: wedding.total_guests,
+              }
               : t
           );
         }
@@ -513,7 +521,7 @@ export default function Hero() {
       try {
         sessionStorage.removeItem("manish_selected_wedding_id");
         localStorage.removeItem("manish_selected_wedding_id");
-      } catch (e) {}
+      } catch (e) { }
     }
   };
 
@@ -662,10 +670,10 @@ export default function Hero() {
           prev.map((t) =>
             t.id === editingWedding.id
               ? {
-                  ...t,
-                  wedding: mergedWedding,
-                  title: `${mergedWedding.groom_name} & ${mergedWedding.bride_name}`,
-                }
+                ...t,
+                wedding: mergedWedding,
+                title: `${mergedWedding.groom_name} & ${mergedWedding.bride_name}`,
+              }
               : t
           )
         );
@@ -713,7 +721,7 @@ export default function Hero() {
           sessionStorage.removeItem("manish_selected_wedding_id");
           localStorage.removeItem("manish_selected_wedding_id");
         }
-      } catch (e) {}
+      } catch (e) { }
 
       showToast("Marriage card removed");
 
@@ -986,11 +994,10 @@ export default function Hero() {
       {toast && (
         <div
           ref={toastRef}
-          className={`fixed top-4 right-4 sm:top-5 sm:right-5 z-50 flex items-center gap-2.5 px-4 py-2.5 rounded-2xl shadow-xl text-xs font-bold ${
-            toast.type === "error"
+          className={`fixed top-4 right-4 sm:top-5 sm:right-5 z-50 flex items-center gap-2.5 px-4 py-2.5 rounded-2xl shadow-xl text-xs font-bold ${toast.type === "error"
               ? "bg-rose-900 text-white"
               : "bg-white text-[#1E293B] border border-[#FF6574]/50 shadow-2xl"
-          }`}
+            }`}
         >
           <span>{toast.message}</span>
         </div>
@@ -1014,53 +1021,53 @@ export default function Hero() {
 
       {/* Full Page Body: Sidebar on Left + Main Content on Right */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0">
-          {/* Left Sidebar (Desktop Static + Mobile Slide-Out Drawer) */}
-          <Sidebar
-            totalCount={
-              selectedWedding
-                ? stats.totalRegistered ?? displayedGuests.length
-                : totalGlobalGuests
-            }
-            totalWeddingsCount={visibleWeddings.length}
-            activeTab={activeTab}
-            setActiveTab={(tab) => {
-              setActiveTab(tab);
-              setIsMobileNavOpen(false);
-            }}
-            onOpenAddModal={() => {
-              setIsMobileNavOpen(false);
-              handleOpenAddGuestModal();
-            }}
-            onOpenAddWeddingModal={() => {
-              setIsMobileNavOpen(false);
-              handleOpenAddWeddingModal();
-            }}
+        {/* Left Sidebar (Desktop Static + Mobile Slide-Out Drawer) */}
+        <Sidebar
+          totalCount={
+            selectedWedding
+              ? stats.totalRegistered ?? displayedGuests.length
+              : totalGlobalGuests
+          }
+          totalWeddingsCount={visibleWeddings.length}
+          activeTab={activeTab}
+          setActiveTab={(tab) => {
+            setActiveTab(tab);
+            setIsMobileNavOpen(false);
+          }}
+          onOpenAddModal={() => {
+            setIsMobileNavOpen(false);
+            handleOpenAddGuestModal();
+          }}
+          onOpenAddWeddingModal={() => {
+            setIsMobileNavOpen(false);
+            handleOpenAddWeddingModal();
+          }}
+          selectedWedding={selectedWedding}
+          weddings={visibleWeddings}
+          onSelectWedding={(w, targetTab) => {
+            setIsMobileNavOpen(false);
+            handleSelectWedding(w, targetTab);
+          }}
+          isMobileNavOpen={isMobileNavOpen}
+          setIsMobileNavOpen={setIsMobileNavOpen}
+          onOpenChat={() => setIsChatModalOpen(true)}
+          onOpenCallCenterModal={() => setIsCallCenterModalOpen(true)}
+          isCollapsed={isSidebarCollapsed}
+          onToggleCollapse={toggleSidebar}
+        />
+
+        {/* Right Main Content */}
+        <main ref={mainViewRef} className="flex-1 flex flex-col bg-[#FAF9F6] overflow-y-auto min-w-0 scroll-smooth">
+          {/* Top Header Bar */}
+          <Header
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            onOpenAddModal={handleOpenAddGuestModal}
             selectedWedding={selectedWedding}
             weddings={visibleWeddings}
-            onSelectWedding={(w, targetTab) => {
-              setIsMobileNavOpen(false);
-              handleSelectWedding(w, targetTab);
-            }}
-            isMobileNavOpen={isMobileNavOpen}
-            setIsMobileNavOpen={setIsMobileNavOpen}
-            onOpenChat={() => setIsChatModalOpen(true)}
+            onOpenMobileNav={() => setIsMobileNavOpen(true)}
             onOpenCallCenterModal={() => setIsCallCenterModalOpen(true)}
-            isCollapsed={isSidebarCollapsed}
-            onToggleCollapse={toggleSidebar}
           />
-
-          {/* Right Main Content */}
-          <main ref={mainViewRef} className="flex-1 flex flex-col bg-[#FAF9F6] overflow-y-auto min-w-0 scroll-smooth">
-            {/* Top Header Bar */}
-            <Header
-              searchQuery={searchQuery}
-              setSearchQuery={setSearchQuery}
-              onOpenAddModal={handleOpenAddGuestModal}
-              selectedWedding={selectedWedding}
-              weddings={visibleWeddings}
-              onOpenMobileNav={() => setIsMobileNavOpen(true)}
-              onOpenCallCenterModal={() => setIsCallCenterModalOpen(true)}
-            />
 
           {/* Banner 1: Call Center Active Notice */}
           {isCallCenter && (
@@ -1098,12 +1105,11 @@ export default function Hero() {
                   </h1>
                   <p className="text-xs text-slate-500 mt-0.5">
                     {isCallCenter && user?.wedding_id && user.wedding_id !== "all"
-                      ? `Workspace assigned strictly to ${
-                          user.assigned_wedding_name ||
-                          (selectedWedding
-                            ? `${selectedWedding.groom_name} & ${selectedWedding.bride_name}`
-                            : "your assigned wedding")
-                        }. Only this wedding's guests and logs are displayed.`
+                      ? `Workspace assigned strictly to ${user.assigned_wedding_name ||
+                      (selectedWedding
+                        ? `${selectedWedding.groom_name} & ${selectedWedding.bride_name}`
+                        : "your assigned wedding")
+                      }. Only this wedding's guests and logs are displayed.`
                       : "Select a wedding to manage its guest directory, view client login credentials, and manage call center logs."}
                   </p>
                 </div>
@@ -1147,8 +1153,8 @@ export default function Hero() {
                     onOpenGoogleSheet={
                       !isMarriageClient && !isViewOnly
                         ? (w) => {
-                            setGoogleSheetModalWedding(w);
-                          }
+                          setGoogleSheetModalWedding(w);
+                        }
                         : null
                     }
                   />
@@ -1222,141 +1228,141 @@ export default function Hero() {
               {/* Guest Directory Controls & Table */}
               <div id="guest-directory-table" className="space-y-4">
                 {/* Back to All Weddings Bar & Wedding Info */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="min-w-0">
-                  {!isMarriageClient && (!isCallCenter || !user?.wedding_id || user.wedding_id === "all") ? (
-                    <button
-                      type="button"
-                      onClick={() => handleSelectWedding(null)}
-                      className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-[#FF6574] mb-1 cursor-pointer transition-all hover:-translate-x-1"
-                    >
-                      <ArrowLeft className="w-3.5 h-3.5 text-[#FF6574]" />
-                      <span>← All Weddings</span>
-                    </button>
-                  ) : isCallCenter && user?.wedding_id && user.wedding_id !== "all" ? (
-                    <div className="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1">
-                      <span className="w-2 h-2 rounded-full bg-[#FF6574]" />
-                      <span>Assigned Marriage Workspace</span>
-                    </div>
-                  ) : null}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    {!isMarriageClient && (!isCallCenter || !user?.wedding_id || user.wedding_id === "all") ? (
+                      <button
+                        type="button"
+                        onClick={() => handleSelectWedding(null)}
+                        className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-[#FF6574] mb-1 cursor-pointer transition-all hover:-translate-x-1"
+                      >
+                        <ArrowLeft className="w-3.5 h-3.5 text-[#FF6574]" />
+                        <span>← All Weddings</span>
+                      </button>
+                    ) : isCallCenter && user?.wedding_id && user.wedding_id !== "all" ? (
+                      <div className="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1">
+                        <span className="w-2 h-2 rounded-full bg-[#FF6574]" />
+                        <span>Assigned Marriage Workspace</span>
+                      </div>
+                    ) : null}
 
-                  <h1 className="text-lg sm:text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight flex items-center gap-1.5 sm:gap-2 flex-wrap">
-                    <span className="truncate">
-                      {selectedWedding
-                        ? `${selectedWedding.groom_name} & ${selectedWedding.bride_name}`
-                        : "Guest Directory"}
-                    </span>
-                    <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 shadow-2xs shrink-0">
-                      {stats?.totalRegistered !== undefined
-                        ? `${stats.totalRegistered} Guests`
-                        : selectedWedding?.total_guests !== undefined
-                        ? `${selectedWedding.total_guests} Guests`
-                        : `${displayedGuests.length} Guests`}
-                    </span>
-                    {isMarriageClient && (
-                      <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 shrink-0">
-                        View Only
+                    <h1 className="text-lg sm:text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                      <span className="truncate">
+                        {selectedWedding
+                          ? `${selectedWedding.groom_name} & ${selectedWedding.bride_name}`
+                          : "Guest Directory"}
                       </span>
+                      <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 shadow-2xs shrink-0">
+                        {stats?.totalRegistered !== undefined
+                          ? `${stats.totalRegistered} Guests`
+                          : selectedWedding?.total_guests !== undefined
+                            ? `${selectedWedding.total_guests} Guests`
+                            : `${displayedGuests.length} Guests`}
+                      </span>
+                      {isMarriageClient && (
+                        <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 shrink-0">
+                          View Only
+                        </span>
+                      )}
+                    </h1>
+                    <p className="text-xs text-slate-600 mt-0.5 truncate">
+                      {selectedWedding?.wedding_date && `${selectedWedding.wedding_date} • `}
+                      {selectedWedding?.venue || selectedWedding?.city || "Venue"}
+                    </p>
+                  </div>
+
+                  {/* Top Actions */}
+                  <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                    {!isMarriageClient && !isViewOnly && (
+                      <button
+                        onClick={() =>
+                          setGoogleSheetModalWedding(
+                            selectedWedding || (weddings && weddings[0])
+                          )
+                        }
+                        className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-full flex items-center gap-1.5 cursor-pointer shadow-2xs btn-interactive"
+                        title="Live Google Sheet Two-Way Sync Settings"
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5 text-[#FF6574]" />
+                        <span>Google Sheet Sync</span>
+                      </button>
                     )}
-                  </h1>
-                  <p className="text-xs text-slate-600 mt-0.5 truncate">
-                    {selectedWedding?.wedding_date && `${selectedWedding.wedding_date} • `}
-                    {selectedWedding?.venue || selectedWedding?.city || "Venue"}
-                  </p>
-                </div>
 
-                {/* Top Actions */}
-                <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
-                  {!isMarriageClient && !isViewOnly && (
+                    {canSendWhatsApp && (
+                      <button
+                        onClick={() => {
+                          setWhatsAppModalInitialGuest(null);
+                          setIsWhatsAppModalOpen(true);
+                        }}
+                        className="bg-[#25d366]/15 hover:bg-[#25d366]/25 border border-[#25d366]/40 text-[#128c7e] text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-full flex items-center gap-1.5 cursor-pointer shadow-2xs btn-interactive"
+                        title="Open WhatsApp Message Desk for this Marriage"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5 text-[#25d366]" />
+                        <span>WhatsApp Messages</span>
+                      </button>
+                    )}
+
                     <button
-                      onClick={() =>
-                        setGoogleSheetModalWedding(
-                          selectedWedding || (weddings && weddings[0])
-                        )
-                      }
+                      onClick={handleExportCsv}
+                      disabled={isExporting}
                       className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-full flex items-center gap-1.5 cursor-pointer shadow-2xs btn-interactive"
-                      title="Live Google Sheet Two-Way Sync Settings"
                     >
-                      <FileSpreadsheet className="w-3.5 h-3.5 text-[#FF6574]" />
-                      <span>Google Sheet Sync</span>
+                      <Download className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Export CSV</span>
                     </button>
-                  )}
 
-                  {canSendWhatsApp && (
                     <button
-                      onClick={() => {
-                        setWhatsAppModalInitialGuest(null);
-                        setIsWhatsAppModalOpen(true);
-                      }}
-                      className="bg-[#25d366]/15 hover:bg-[#25d366]/25 border border-[#25d366]/40 text-[#128c7e] text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-full flex items-center gap-1.5 cursor-pointer shadow-2xs btn-interactive"
-                      title="Open WhatsApp Message Desk for this Marriage"
+                      onClick={handleSyncData}
+                      disabled={isSyncing}
+                      className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-[11px] sm:text-xs font-bold px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-full flex items-center gap-1 cursor-pointer shadow-2xs btn-interactive"
+                      title="Refresh data"
                     >
-                      <MessageSquare className="w-3.5 h-3.5 text-[#25d366]" />
-                      <span>WhatsApp Messages</span>
+                      <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${isSyncing ? "animate-spin" : ""}`} />
                     </button>
-                  )}
 
-                  <button
-                    onClick={handleExportCsv}
-                    disabled={isExporting}
-                    className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-full flex items-center gap-1.5 cursor-pointer shadow-2xs btn-interactive"
-                  >
-                    <Download className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Export CSV</span>
-                  </button>
-
-                  <button
-                    onClick={handleSyncData}
-                    disabled={isSyncing}
-                    className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-[11px] sm:text-xs font-bold px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-full flex items-center gap-1 cursor-pointer shadow-2xs btn-interactive"
-                    title="Refresh data"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${isSyncing ? "animate-spin" : ""}`} />
-                  </button>
-
-                  {!isViewOnly && (
-                    <button
-                      onClick={handleOpenAddGuestModal}
-                      className="bg-[#FF6574] hover:bg-[#e05463] active:scale-98 text-white text-[11px] sm:text-xs font-bold px-3 sm:px-4 py-1.5 sm:py-2 rounded-full flex items-center gap-1.5 cursor-pointer shadow-sm btn-interactive"
-                    >
-                      <Plus className="w-3.5 h-3.5 text-white" />
-                      <span>Add Guest</span>
-                    </button>
-                  )}
+                    {!isViewOnly && (
+                      <button
+                        onClick={handleOpenAddGuestModal}
+                        className="bg-[#FF6574] hover:bg-[#e05463] active:scale-98 text-white text-[11px] sm:text-xs font-bold px-3 sm:px-4 py-1.5 sm:py-2 rounded-full flex items-center gap-1.5 cursor-pointer shadow-sm btn-interactive"
+                      >
+                        <Plus className="w-3.5 h-3.5 text-white" />
+                        <span>Add Guest</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
 
-              {/* Metric Summary Cards */}
-              <StatsCards stats={stats} />
+                {/* Metric Summary Cards */}
+                <StatsCards stats={stats} />
 
-              {/* Filter and Search Bar */}
-              <FilterBar
-                searchQuery={searchQuery}
-                setSearchQuery={setSearchQuery}
-                sideFilter={sideFilter}
-                setSideFilter={setSideFilter}
-                rsvpFilter={rsvpFilter}
-                setRsvpFilter={setRsvpFilter}
-                idCardFilter={idCardFilter}
-                setIdCardFilter={setIdCardFilter}
-                callAttemptsFilter={callAttemptsFilter}
-                setCallAttemptsFilter={setCallAttemptsFilter}
-              />
+                {/* Filter and Search Bar */}
+                <FilterBar
+                  searchQuery={searchQuery}
+                  setSearchQuery={setSearchQuery}
+                  sideFilter={sideFilter}
+                  setSideFilter={setSideFilter}
+                  rsvpFilter={rsvpFilter}
+                  setRsvpFilter={setRsvpFilter}
+                  idCardFilter={idCardFilter}
+                  setIdCardFilter={setIdCardFilter}
+                  callAttemptsFilter={callAttemptsFilter}
+                  setCallAttemptsFilter={setCallAttemptsFilter}
+                />
 
-              {/* Guest Directory Table */}
-              <GuestTable
-                guests={displayedGuests}
-                loading={loading}
-                onEditGuest={handleOpenEditGuestModal}
-                onDeleteGuest={(guest) => setDeletingGuest(guest)}
-                onViewGuest={(guest) => setViewingGuest(guest)}
-                onOpenCallLogs={handleOpenCallLogs}
-                onOpenQuickWhatsApp={(guest) => {
-                  setWhatsAppModalInitialGuest(guest);
-                  setIsWhatsAppModalOpen(true);
-                }}
-                onUpdateRsvp={handleQuickUpdateRsvp}
-              />
+                {/* Guest Directory Table */}
+                <GuestTable
+                  guests={displayedGuests}
+                  loading={loading}
+                  onEditGuest={handleOpenEditGuestModal}
+                  onDeleteGuest={(guest) => setDeletingGuest(guest)}
+                  onViewGuest={(guest) => setViewingGuest(guest)}
+                  onOpenCallLogs={handleOpenCallLogs}
+                  onOpenQuickWhatsApp={(guest) => {
+                    setWhatsAppModalInitialGuest(guest);
+                    setIsWhatsAppModalOpen(true);
+                  }}
+                  onUpdateRsvp={handleQuickUpdateRsvp}
+                />
               </div>
             </div>
           )}
@@ -1391,7 +1397,7 @@ export default function Hero() {
             />
           )}
         </main>
-        </div>
+      </div>
 
       {/* ================= MODALS ================= */}
 
