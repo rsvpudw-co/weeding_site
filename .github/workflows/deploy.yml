@@ -1,0 +1,114 @@
+
+name: RSVP.CO - CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - master
+
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+
+  # ======================================
+  # JOB 1: CONTINUOUS INTEGRATION
+  # ======================================
+  test:
+    name: Backend Verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install Dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Check Backend Syntax
+        working-directory: backend
+        run: npm run check
+
+      - name: Verify Dependencies
+        working-directory: backend
+        run: npm ls --depth=0
+
+  # ======================================
+  # JOB 2: CONTINUOUS DEPLOYMENT
+  # ======================================
+  deploy:
+    name: Deploy to DigitalOcean
+    needs: test
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to DigitalOcean
+        uses: appleboy/ssh-action@v1.2.0
+
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+
+          script: |
+            set -e
+
+            cd /var/www/weeding_site
+
+            echo "Creating PostgreSQL backup..."
+
+            mkdir -p /opt/wedding-backups
+
+            BACKUP_FILE="/opt/wedding-backups/wedding_$(date +%F_%H-%M-%S).sql"
+
+            docker exec wedding-db sh -c \
+              'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' \
+              > "$BACKUP_FILE"
+
+            test -s "$BACKUP_FILE"
+
+            echo "Backup successful"
+
+            echo "Pulling latest code..."
+
+            git pull --ff-only origin master
+
+            echo "Validating Docker Compose..."
+
+            docker compose config -q
+
+            echo "Building backend..."
+
+            docker compose build backend
+
+            echo "Deploying backend..."
+
+            docker compose up -d --no-deps --force-recreate backend
+
+            echo "Checking backend status..."
+
+            sleep 5
+
+            docker inspect wedding-backend \
+              --format='{{.State.Status}}' | grep -qx running
+
+            echo "Deployment successful!"
+
+            # Remove local backups older than 14 days
+            find /opt/wedding-backups \
+              -type f -name 'wedding_*.sql' -mtime +14 -delete
