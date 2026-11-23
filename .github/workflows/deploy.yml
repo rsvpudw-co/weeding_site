@@ -68,7 +68,7 @@ jobs:
           script: |
             set -e
 
-            cd /var/www/weeding_site
+            cd /root/var/www/weeding_site
 
             echo "Creating PostgreSQL backup..."
 
