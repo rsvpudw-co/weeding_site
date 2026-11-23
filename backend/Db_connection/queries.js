@@ -13,6 +13,8 @@ import { supabase } from "./supabaseClient.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const MESSAGES_FILE = path.resolve(__dirname, "../database/messages_store.json");
+const GUESTS_FILE = path.resolve(__dirname, "../database/guests_store.json");
+const WEDDINGS_FILE = path.resolve(__dirname, "../database/weddings_store.json");
 
 // Helper to save messages to local file
 export const saveMessagesToFile = () => {
@@ -39,6 +41,75 @@ const loadMessagesFromFile = () => {
     console.warn("Notice: Could not load messages_store.json:", e.message);
   }
   return [];
+};
+
+// Helper to save guests to local file
+export const saveGuestsToFile = () => {
+  try {
+    const dir = path.dirname(GUESTS_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(GUESTS_FILE, JSON.stringify(store.guests || [], null, 2), "utf8");
+  } catch (e) {
+    console.warn("Notice: Could not write guests_store.json:", e.message);
+  }
+};
+
+// Helper to load guests from local file
+const loadGuestsFromFile = () => {
+  try {
+    if (fs.existsSync(GUESTS_FILE)) {
+      const content = fs.readFileSync(GUESTS_FILE, "utf8");
+      const list = JSON.parse(content);
+      if (Array.isArray(list) && list.length > 0) {
+        return list;
+      }
+    }
+  } catch (e) {
+    console.warn("Notice: Could not load guests_store.json:", e.message);
+  }
+  return [];
+};
+
+// Helper to save weddings to local file
+export const saveWeddingsToFile = () => {
+  try {
+    const dir = path.dirname(WEDDINGS_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(WEDDINGS_FILE, JSON.stringify(store.weddings || [], null, 2), "utf8");
+  } catch (e) {
+    console.warn("Notice: Could not write weddings_store.json:", e.message);
+  }
+};
+
+// Helper to load weddings from local file
+const loadWeddingsFromFile = () => {
+  try {
+    if (fs.existsSync(WEDDINGS_FILE)) {
+      const content = fs.readFileSync(WEDDINGS_FILE, "utf8");
+      const list = JSON.parse(content);
+      if (Array.isArray(list) && list.length > 0) {
+        return list;
+      }
+    }
+  } catch (e) {
+    console.warn("Notice: Could not load weddings_store.json:", e.message);
+  }
+  return [
+    {
+      id: "wedding_01",
+      groom_name: "Rahul",
+      bride_name: "Pooja",
+      wedding_date: "2026-12-15",
+      venue: "The Oberoi Udaivilas",
+      city: "Udaipur",
+      cover_theme: "emerald",
+      client_username: "pooja_rahul",
+      client_password: "password123",
+      google_sheet_sync_status: "connected",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+  ];
 };
 
 // ============================================================
@@ -69,8 +140,8 @@ export const store = {
       updated_at: new Date().toISOString(),
     },
   ],
-  weddings: [],
-  guests: [],
+  weddings: loadWeddingsFromFile(),
+  guests: loadGuestsFromFile(),
   guest_call_logs: [],
   messages: loadMessagesFromFile(),
 };
@@ -101,7 +172,8 @@ export const query = async (text, params = []) => {
     store.guests = store.guests.filter((g) => g.wedding_id !== id);
     store.guest_call_logs = store.guest_call_logs.filter((c) => c.wedding_id !== id);
     store.messages = (store.messages || []).filter((m) => m.wedding_id !== id);
-    // skip disk write during delete
+    saveWeddingsToFile();
+    saveGuestsToFile();
 
     if (supabase) {
       Promise.allSettled([
@@ -142,6 +214,7 @@ export const query = async (text, params = []) => {
     const initialLen = store.guests.length;
     store.guests = store.guests.filter((g) => g.id !== id && g.wedding_id !== id);
     store.guest_call_logs = store.guest_call_logs.filter((c) => c.guest_id !== id && c.wedding_id !== id);
+    saveGuestsToFile();
 
     if (supabase) {
       try {
@@ -275,6 +348,7 @@ export const query = async (text, params = []) => {
     } else {
       store.weddings.push(newWedding);
     }
+    saveWeddingsToFile();
     if (supabase) {
       try {
         await supabase.from("weddings").upsert(newWedding);
@@ -344,6 +418,7 @@ export const query = async (text, params = []) => {
     } else {
       store.guests.push(newGuest);
     }
+    saveGuestsToFile();
     if (supabase) {
       try {
         const supaPayload = { ...newGuest };
@@ -419,6 +494,7 @@ export const query = async (text, params = []) => {
         store.weddings[idx].google_sheet_last_synced = new Date().toISOString();
         store.weddings[idx].google_sheet_sync_status = "synced";
         store.weddings[idx].updated_at = new Date().toISOString();
+        saveWeddingsToFile();
       }
       if (supabase) {
         try {
@@ -472,6 +548,7 @@ export const query = async (text, params = []) => {
       google_sheet_last_synced: params[12] !== undefined ? params[12] : currentWedding.google_sheet_last_synced,
       updated_at: new Date().toISOString(),
     };
+    saveWeddingsToFile();
 
     if (supabase) {
       try {
@@ -575,6 +652,7 @@ export const query = async (text, params = []) => {
     }
 
     store.guests[idx] = updatedObj;
+    saveGuestsToFile();
     if (supabase) {
       try {
         const supaPayload = { ...updatedObj };
@@ -712,9 +790,12 @@ export const query = async (text, params = []) => {
 
     if (lowerSql.includes("select count(*)::int as \"totalguests\"") || lowerSql.includes("sum(case when")) {
       const weddingId = params[0];
-      const list = store.guests.filter(
-        (g) => !weddingId || weddingId === "all" || weddingId === "All" || g.wedding_id === weddingId
-      );
+      const list = store.guests.filter((g) => {
+        if (!weddingId || weddingId === "all" || weddingId === "All") return true;
+        const gWId = String(g.wedding_id || "").trim();
+        const targetWId = String(weddingId).trim();
+        return gWId === targetWId || gWId.replace(/^wedding_/, "") === targetWId.replace(/^wedding_/, "");
+      });
       const totalGuests = list.length;
       const notCalledCount = list.filter((g) => Number(g.call_count || 0) === 0).length;
       const call1Count = list.filter((g) => Number(g.call_count) === 1).length;
@@ -750,7 +831,11 @@ export const query = async (text, params = []) => {
       const pIdx = match ? parseInt(match[1], 10) - 1 : 0;
       const wId = params[pIdx];
       if (wId && wId !== "All" && wId !== "all") {
-        list = list.filter((g) => String(g.wedding_id || "").trim() === String(wId).trim());
+        list = list.filter((g) => {
+          const gWId = String(g.wedding_id || "").trim();
+          const targetWId = String(wId).trim();
+          return gWId === targetWId || gWId.replace(/^wedding_/, "") === targetWId.replace(/^wedding_/, "");
+        });
       }
     }
 

@@ -1,6 +1,6 @@
 import pool from "../Db_connection/dbconnection.js";
 import { supabase } from "../Db_connection/supabaseClient.js";
-import { store } from "../Db_connection/queries.js";
+import { store, saveGuestsToFile } from "../Db_connection/queries.js";
 import crypto from "crypto";
 
 // Helper function to resolve and normalize guest side (Bride vs Groom vs Both)
@@ -790,6 +790,7 @@ export const GuestModel = {
         store.guests.push(g);
       }
     }
+    saveGuestsToFile();
 
     return sanitized;
   },
