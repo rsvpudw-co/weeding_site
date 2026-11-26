@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   X,
   Calendar,
@@ -19,6 +19,12 @@ import {
   Clock,
   Check,
   Image as ImageIcon,
+  Maximize2,
+  ExternalLink,
+  ZoomIn,
+  ZoomOut,
+  RefreshCw,
+  UploadCloud,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../services/api";
@@ -27,6 +33,7 @@ import { getGuestIdCardMeta } from "../utils/idCardUtils";
 export default function GuestDetailsDrawer({
   guest,
   isOpen,
+  initialExpandIdCard = false,
   onClose,
   onEdit,
   onOpenCallLogs,
@@ -35,6 +42,26 @@ export default function GuestDetailsDrawer({
   const { isViewOnly, canEditGuests, canUpdateCallLogs, canSendWhatsApp } = useAuth();
   const [callLogs, setCallLogs] = useState([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
+
+  const [previewSrc, setPreviewSrc] = useState("");
+  const [previewMime, setPreviewMime] = useState("");
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [previewError, setPreviewError] = useState("");
+  const [isIdPreviewExpanded, setIsIdPreviewExpanded] = useState(false);
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [previewRetryKey, setPreviewRetryKey] = useState(0);
+  const blobUrlRef = useRef(null);
+
+  const revokeBlob = () => {
+    if (blobUrlRef.current) {
+      URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => revokeBlob();
+  }, []);
 
   useEffect(() => {
     if (isOpen && guest?.id) {
@@ -50,13 +77,84 @@ export default function GuestDetailsDrawer({
     }
   }, [isOpen, guest?.id]);
 
+  const idCardMeta = getGuestIdCardMeta(guest);
+
+  useEffect(() => {
+    setIsIdPreviewExpanded(Boolean(isOpen && initialExpandIdCard && idCardMeta.hasDocument));
+    setZoomLevel(1);
+  }, [isOpen, initialExpandIdCard, guest?.id, idCardMeta.hasDocument]);
+
+  useEffect(() => {
+    revokeBlob();
+    setPreviewSrc("");
+    setPreviewMime("");
+    setPreviewError("");
+
+    if (!isOpen || !guest?.id || !idCardMeta.hasDocument || !idCardMeta.viewUrl) {
+      setLoadingPreview(false);
+      return;
+    }
+
+    const targetUrl = idCardMeta.viewUrl;
+    if (targetUrl.startsWith("blob:")) {
+      setPreviewSrc(targetUrl);
+      setLoadingPreview(false);
+      return;
+    }
+
+    const isInlineOrLocalApi =
+      targetUrl.startsWith("data:") || String(guest.id_card_copy || "").includes("/id-card");
+
+    const controller = new AbortController();
+    let cancelled = false;
+    setLoadingPreview(true);
+
+    fetch(targetUrl, { signal: controller.signal })
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(res.status === 404 ? "ID card file not found in database." : `Unable to load preview (HTTP ${res.status}).`);
+        }
+        const blob = await res.blob();
+        if (cancelled) return;
+        const objectUrl = URL.createObjectURL(blob);
+        blobUrlRef.current = objectUrl;
+        setPreviewMime(blob.type || "");
+        setPreviewSrc(objectUrl);
+      })
+      .catch((err) => {
+        if (cancelled || err?.name === "AbortError") return;
+        if (!isInlineOrLocalApi && targetUrl.startsWith("http")) {
+          // External URL (legacy Google Drive / CDN link) fallback
+          setPreviewSrc(targetUrl);
+        } else {
+          setPreviewError(err?.message || "Failed to load ID card preview.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingPreview(false);
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      revokeBlob();
+    };
+  }, [isOpen, guest?.id, guest?.id_card_copy, idCardMeta.viewUrl, previewRetryKey]);
+
   if (!isOpen || !guest) return null;
 
   const isConfirmed = (guest.rsvp_status || "").toLowerCase() === "confirmed";
   const isIdReceived = (guest.id_card_received || "").toLowerCase() === "yes";
-  const idCardMeta = getGuestIdCardMeta(guest);
-  const isImage = idCardMeta.isImage;
-  const isPdf = idCardMeta.isPdf;
+  const isImage =
+    previewMime.startsWith("image/") ||
+    (!previewMime && idCardMeta.isImage);
+  const isPdf =
+    previewMime.includes("pdf") ||
+    (!previewMime && idCardMeta.isPdf);
+  const canRenderPdfFrame =
+    isPdf &&
+    Boolean(previewSrc) &&
+    (previewSrc.startsWith("blob:") || previewSrc.startsWith("data:") || idCardMeta.isPdfPreviewable);
   const guestSide = (guest.side || "Groom").toLowerCase();
   const callCount = Number(guest.call_count) || 0;
 
@@ -176,6 +274,171 @@ export default function GuestDetailsDrawer({
                 </span>
               )}
             </div>
+          </div>
+
+          {/* Section: ID Card Preview (Prominent inside View Section) */}
+          <div className="bg-slate-50/90 border border-slate-200/90 rounded-2xl p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5 text-slate-800 font-bold text-xs uppercase tracking-wider">
+                {isImage ? (
+                  <ImageIcon className="w-4 h-4 text-emerald-600" />
+                ) : (
+                  <FileText className="w-4 h-4 text-emerald-600" />
+                )}
+                <span>ID Card Preview</span>
+              </div>
+
+              {idCardMeta.hasDocument && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {(previewSrc || idCardMeta.viewUrl) && (
+                    <button
+                      type="button"
+                      onClick={() => setIsIdPreviewExpanded(true)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#1E3A8A] hover:bg-[#172554] text-white text-[11px] font-bold transition-colors cursor-pointer shadow-2xs"
+                      title="Expand full-size ID card preview"
+                    >
+                      <Maximize2 className="w-3 h-3" />
+                      <span>Full Preview</span>
+                    </button>
+                  )}
+                  {(previewSrc || idCardMeta.viewUrl) && (
+                    <a
+                      href={previewSrc || idCardMeta.viewUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-[11px] font-semibold transition-colors"
+                      title="Open in new tab"
+                    >
+                      <ExternalLink className="w-3 h-3 text-emerald-600" />
+                      <span>Open Tab</span>
+                    </a>
+                  )}
+                  {idCardMeta.downloadUrl && (
+                    <a
+                      href={idCardMeta.downloadUrl}
+                      download={idCardMeta.fileName}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-semibold transition-colors"
+                      title="Download ID card"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>Download</span>
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {idCardMeta.hasDocument ? (
+              <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-2xs space-y-2.5">
+                <div className="flex items-center gap-2.5 overflow-hidden">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold shrink-0">
+                    {isImage ? <ImageIcon className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold text-slate-900 truncate">
+                      {idCardMeta.fileName}
+                    </p>
+                    <p className="text-[10px] text-emerald-600 font-medium">
+                      {isImage ? "Photo ID" : "PDF ID Document"} • {idCardMeta.fileSizeLabel}
+                    </p>
+                  </div>
+                </div>
+
+                {loadingPreview ? (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 h-44 flex flex-col items-center justify-center gap-2 text-slate-500">
+                    <div className="w-6 h-6 rounded-full border-2 border-slate-300 border-t-emerald-600 animate-spin" />
+                    <span className="text-[11px] font-medium">Loading ID card preview...</span>
+                  </div>
+                ) : previewError ? (
+                  <div className="rounded-xl border border-rose-200 bg-rose-50/70 p-4 text-center space-y-2">
+                    <p className="text-xs font-semibold text-rose-700">{previewError}</p>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewRetryKey((k) => k + 1)}
+                      className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-white border border-rose-200 text-rose-700 hover:bg-rose-100 text-[11px] font-bold cursor-pointer"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span>Retry Preview</span>
+                    </button>
+                  </div>
+                ) : isImage && (previewSrc || idCardMeta.viewUrl) ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsIdPreviewExpanded(true)}
+                    className="group relative w-full rounded-xl overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center cursor-zoom-in focus:outline-none"
+                    title="Click to enlarge ID card photo"
+                  >
+                    <img
+                      src={previewSrc || idCardMeta.viewUrl}
+                      alt={`${guest.guest_name} ID Card`}
+                      className="w-full max-h-60 object-contain"
+                      onError={() => setPreviewError("Unable to render ID photo preview.")}
+                    />
+                    <span className="opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-2 right-2 bg-slate-900/80 text-white text-[10px] font-semibold px-2.5 py-1 rounded-full flex items-center gap-1">
+                      <Maximize2 className="w-3 h-3" />
+                      <span>Click to expand</span>
+                    </span>
+                  </button>
+                ) : canRenderPdfFrame ? (
+                  <div className="space-y-1.5">
+                    <div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-100">
+                      <iframe
+                        src={previewSrc}
+                        title="ID Document PDF Preview"
+                        className="w-full h-64 border-0"
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-500 text-center">
+                      Click <strong>Full Preview</strong> above for full-page PDF view, or{" "}
+                      <a
+                        href={previewSrc}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-emerald-700 font-semibold hover:underline"
+                      >
+                        open in new tab
+                      </a>
+                      .
+                    </p>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-center text-[11px] text-slate-600">
+                    Document attached ({idCardMeta.fileName}).{" "}
+                    {idCardMeta.viewUrl ? (
+                      <a
+                        href={idCardMeta.viewUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-emerald-700 font-bold hover:underline"
+                      >
+                        Open Document
+                      </a>
+                    ) : (
+                      <span>Edit guest to attach a viewable photo or PDF file.</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="bg-white border border-dashed border-slate-300 rounded-xl p-3.5 flex items-center justify-between gap-3">
+                <p className="text-slate-500 italic text-[11px]">
+                  No ID card photo or PDF attached for this guest yet.
+                </p>
+                {canEditGuests && onEdit && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onEdit(guest);
+                    }}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-[11px] font-bold shrink-0 cursor-pointer"
+                  >
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    <span>Upload ID</span>
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Call Center Checkpoints & Responses (Visible to All Users & Clients) */}
@@ -353,83 +616,6 @@ export default function GuestDetailsDrawer({
             </div>
           </div>
 
-          {/* Section: ID Card Copy */}
-          <div className="bg-slate-50/80 border border-slate-200/90 rounded-2xl p-4 space-y-3">
-            <div className="flex items-center gap-1.5 text-slate-800 font-bold text-xs uppercase tracking-wider">
-              <FileText className="w-4 h-4 text-emerald-600" />
-              <span>ID Card Copy / Document Record</span>
-            </div>
-            {idCardMeta.hasDocument ? (
-              <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-2xs space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2.5 overflow-hidden">
-                    <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold shrink-0">
-                      {isImage ? <ImageIcon className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold text-slate-900 truncate">
-                        {idCardMeta.fileName}
-                      </p>
-                      <p className="text-[10px] text-emerald-600 font-medium">
-                        {isImage ? "Photo ID" : "PDF ID Document"} • {idCardMeta.fileSizeLabel}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {idCardMeta.viewUrl && (
-                      <a
-                        href={idCardMeta.viewUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-semibold transition-colors"
-                        title="Open in new window"
-                      >
-                        <Eye className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>View</span>
-                      </a>
-                    )}
-                    {idCardMeta.downloadUrl && (
-                      <a
-                        href={idCardMeta.downloadUrl}
-                        download={idCardMeta.fileName}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors"
-                        title="Download file"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        <span>Download</span>
-                      </a>
-                    )}
-                  </div>
-                </div>
-
-                {isImage && idCardMeta.viewUrl && (
-                  <div className="mt-2 rounded-xl overflow-hidden border border-slate-200 max-h-56 bg-slate-100 flex items-center justify-center">
-                    <img
-                      src={idCardMeta.viewUrl}
-                      alt="ID Card Document"
-                      className="w-full h-full object-contain max-h-56"
-                    />
-                  </div>
-                )}
-
-                  { isPdf && idCardMeta.isPdfPreviewable && idCardMeta.viewUrl && (
-                    <div className="mt-2 rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
-                      <iframe
-                        src={idCardMeta.viewUrl}
-                        title="ID Document PDF Preview"
-                        className="w-full h-64 border-0"
-                      />
-                    </div>
-                  )}
-              </div>
-            ) : (
-              <p className="text-slate-400 italic text-[11px]">
-                No ID card file attached for this guest.
-              </p>
-            )}
-          </div>
-
           {/* Section: Special Request */}
           <div className="bg-amber-50/70 border border-amber-200/70 rounded-2xl p-4 space-y-2">
             <div className="flex items-center gap-1.5 text-amber-900 font-bold text-xs uppercase tracking-wider">
@@ -481,6 +667,128 @@ export default function GuestDetailsDrawer({
           )}
         </div>
       </div>
+
+      {/* Expanded Full-Screen ID Card Preview Lightbox */}
+      {isIdPreviewExpanded && idCardMeta.hasDocument && (
+        <div
+          className="fixed inset-0 z-[60] bg-slate-950/90 backdrop-blur-sm flex flex-col p-3 sm:p-6 animate-fadeIn"
+          onClick={() => setIsIdPreviewExpanded(false)}
+        >
+          <div
+            className="w-full max-w-5xl mx-auto bg-white rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh] flex-1"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Lightbox Header */}
+            <div className="px-4 sm:px-5 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-2 flex-wrap shrink-0">
+              <div className="min-w-0">
+                <h4 className="text-sm font-bold text-slate-900 truncate">
+                  {guest.guest_name} — ID Card Preview
+                </h4>
+                <p className="text-[11px] text-slate-500 truncate">
+                  {idCardMeta.fileName} • {idCardMeta.fileSizeLabel}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {isImage && previewSrc && (
+                  <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-1.5 py-0.5 mr-1">
+                    <button
+                      type="button"
+                      onClick={() => setZoomLevel((z) => Math.max(0.5, Number((z - 0.25).toFixed(2))))}
+                      className="p-1 text-slate-600 hover:text-slate-900 cursor-pointer"
+                      title="Zoom out"
+                    >
+                      <ZoomOut className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="text-[11px] font-bold text-slate-700 min-w-[38px] text-center">
+                      {Math.round(zoomLevel * 100)}%
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setZoomLevel((z) => Math.min(2.5, Number((z + 0.25).toFixed(2))))}
+                      className="p-1 text-slate-600 hover:text-slate-900 cursor-pointer"
+                      title="Zoom in"
+                    >
+                      <ZoomIn className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+
+                {(previewSrc || idCardMeta.viewUrl) && (
+                  <a
+                    href={previewSrc || idCardMeta.viewUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-semibold"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Open Tab</span>
+                  </a>
+                )}
+
+                {idCardMeta.downloadUrl && (
+                  <a
+                    href={idCardMeta.downloadUrl}
+                    download={idCardMeta.fileName}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#1E3A8A] hover:bg-[#172554] text-white text-xs font-semibold"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download</span>
+                  </a>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setIsIdPreviewExpanded(false)}
+                  className="p-1.5 rounded-lg bg-slate-200/80 hover:bg-slate-300 text-slate-700 cursor-pointer ml-1"
+                  title="Close preview"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Lightbox Body */}
+            <div className="flex-1 overflow-auto bg-slate-900/95 flex items-center justify-center p-2 sm:p-4 min-h-[360px]">
+              {loadingPreview ? (
+                <div className="flex flex-col items-center gap-2 text-white/80">
+                  <div className="w-8 h-8 rounded-full border-2 border-white/30 border-t-emerald-400 animate-spin" />
+                  <span className="text-xs">Loading ID card preview...</span>
+                </div>
+              ) : isImage && (previewSrc || idCardMeta.viewUrl) ? (
+                <img
+                  src={previewSrc || idCardMeta.viewUrl}
+                  alt={`${guest.guest_name} ID Card Full Preview`}
+                  style={{ transform: `scale(${zoomLevel})`, transformOrigin: "center center" }}
+                  className="max-w-full max-h-[78vh] object-contain rounded-lg transition-transform duration-150 shadow-2xl"
+                />
+              ) : canRenderPdfFrame ? (
+                <iframe
+                  src={previewSrc}
+                  title="ID Card Full PDF Preview"
+                  className="w-full h-[78vh] rounded-lg bg-white border-0"
+                />
+              ) : (
+                <div className="text-center text-white space-y-3 p-6">
+                  <FileText className="w-10 h-10 mx-auto text-emerald-400" />
+                  <p className="text-sm font-semibold">{idCardMeta.fileName}</p>
+                  {idCardMeta.viewUrl && (
+                    <a
+                      href={idCardMeta.viewUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-emerald-500 hover:bg-emerald-600 text-slate-950 text-xs font-bold"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>Open Document</span>
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
