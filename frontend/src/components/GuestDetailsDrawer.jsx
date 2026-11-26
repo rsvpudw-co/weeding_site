@@ -510,10 +510,10 @@ export default function GuestDetailsDrawer({
                           </span>
                           <span
                             className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${isPositive
-                              ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-                              : isDeclined
-                                ? "bg-rose-50 text-rose-800 border-rose-200"
-                                : "bg-amber-50 text-amber-800 border-amber-200"
+                                ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                                : isDeclined
+                                  ? "bg-rose-50 text-rose-800 border-rose-200"
+                                  : "bg-amber-50 text-amber-800 border-amber-200"
                               }`}
                           >
                             {log.call_outcome || "Connected"}
