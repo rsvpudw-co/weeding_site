@@ -15,6 +15,7 @@ const __dirname = path.dirname(__filename);
 const MESSAGES_FILE = path.resolve(__dirname, "../database/messages_store.json");
 const GUESTS_FILE = path.resolve(__dirname, "../database/guests_store.json");
 const WEDDINGS_FILE = path.resolve(__dirname, "../database/weddings_store.json");
+const ID_CARDS_FILE = path.resolve(__dirname, "../database/id_cards_store.json");
 
 // Helper to save messages to local file
 export const saveMessagesToFile = () => {
@@ -143,7 +144,26 @@ export const store = {
   weddings: loadWeddingsFromFile(),
   guests: loadGuestsFromFile(),
   guest_call_logs: [],
+  guest_id_cards: (() => {
+    try {
+      if (fs.existsSync(ID_CARDS_FILE)) {
+        const list = JSON.parse(fs.readFileSync(ID_CARDS_FILE, "utf8"));
+        if (Array.isArray(list)) return list;
+      }
+    } catch (e) {}
+    return [];
+  })(),
   messages: loadMessagesFromFile(),
+};
+
+export const saveIdCardsToFile = () => {
+  try {
+    const dir = path.dirname(ID_CARDS_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(ID_CARDS_FILE, JSON.stringify(store.guest_id_cards || [], null, 2), "utf8");
+  } catch (e) {
+    console.warn("Notice: Could not write id_cards_store.json:", e.message);
+  }
 };
 
 
@@ -171,9 +191,11 @@ export const query = async (text, params = []) => {
     store.weddings = store.weddings.filter((w) => w.id !== id);
     store.guests = store.guests.filter((g) => g.wedding_id !== id);
     store.guest_call_logs = store.guest_call_logs.filter((c) => c.wedding_id !== id);
+    store.guest_id_cards = (store.guest_id_cards || []).filter((ic) => ic.wedding_id !== id);
     store.messages = (store.messages || []).filter((m) => m.wedding_id !== id);
     saveWeddingsToFile();
     saveGuestsToFile();
+    saveIdCardsToFile();
 
     if (supabase) {
       Promise.allSettled([
@@ -209,12 +231,25 @@ export const query = async (text, params = []) => {
     return formatResult(new Array(affected).fill({ wedding_id: weddingId }));
   }
 
+  if (lowerSql.startsWith("delete from guest_id_cards")) {
+    const guestId = params[0];
+    const initialLen = (store.guest_id_cards || []).length;
+    store.guest_id_cards = (store.guest_id_cards || []).filter(
+      (ic) => ic.guest_id !== guestId && ic.id !== guestId
+    );
+    saveIdCardsToFile();
+    const affected = Math.max(0, initialLen - (store.guest_id_cards || []).length);
+    return formatResult(affected > 0 ? new Array(affected).fill({ guest_id: guestId }) : []);
+  }
+
   if (lowerSql.startsWith("delete from guests")) {
     const id = params[0];
     const initialLen = store.guests.length;
     store.guests = store.guests.filter((g) => g.id !== id && g.wedding_id !== id);
     store.guest_call_logs = store.guest_call_logs.filter((c) => c.guest_id !== id && c.wedding_id !== id);
+    store.guest_id_cards = (store.guest_id_cards || []).filter((ic) => ic.guest_id !== id && ic.wedding_id !== id);
     saveGuestsToFile();
+    saveIdCardsToFile();
 
     if (supabase) {
       try {
@@ -409,6 +444,9 @@ export const query = async (text, params = []) => {
       call_status: params[19 + pOffset] || "Not Called",
       last_called_at: params[20 + pOffset] || null,
       last_call_summary: params[21 + pOffset] || null,
+      id_card_file_name: params[22 + pOffset] || null,
+      id_card_mime_type: params[23 + pOffset] || null,
+      id_card_file_size: params[24 + pOffset] !== undefined && params[24 + pOffset] !== null ? Number(params[24 + pOffset]) : null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -456,6 +494,34 @@ export const query = async (text, params = []) => {
       }
     }
     return formatResult([newLog]);
+  }
+
+  if (lowerSql.startsWith("insert into guest_id_cards")) {
+    const fileBuffer = Buffer.isBuffer(params[6]) ? params[6] : Buffer.from(params[6] || "");
+    const record = {
+      id: params[0],
+      guest_id: params[1],
+      wedding_id: params[2] || "wedding_01",
+      file_name: params[3] || "id_card",
+      mime_type: params[4] || "application/octet-stream",
+      file_size: Number(params[5]) || fileBuffer.length,
+      file_data_base64: fileBuffer.toString("base64"),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    if (!store.guest_id_cards) store.guest_id_cards = [];
+    const existIdx = store.guest_id_cards.findIndex((ic) => ic.guest_id === record.guest_id);
+    if (existIdx >= 0) {
+      store.guest_id_cards[existIdx] = {
+        ...store.guest_id_cards[existIdx],
+        ...record,
+        id: store.guest_id_cards[existIdx].id,
+      };
+    } else {
+      store.guest_id_cards.push(record);
+    }
+    saveIdCardsToFile();
+    return formatResult([{ ...record, file_data: fileBuffer }]);
   }
 
   if (lowerSql.startsWith("insert into wedding_messages")) {
@@ -635,6 +701,20 @@ export const query = async (text, params = []) => {
       updatedObj.last_call_summary = params[1] || "";
       if (!updatedObj.call_count || Number(updatedObj.call_count) === 0) {
         updatedObj.call_count = 1;
+      }
+    } else if (lowerSql.includes("id_card_copy = $")) {
+      // 5. Targeted ID card metadata update
+      if (lowerSql.includes("id_card_received = $1")) {
+        updatedObj.id_card_received = params[0];
+        updatedObj.id_card_copy = params[1];
+        updatedObj.id_card_file_name = params[2] || null;
+        updatedObj.id_card_mime_type = params[3] || null;
+        updatedObj.id_card_file_size = params[4] !== undefined && params[4] !== null ? Number(params[4]) : null;
+      } else {
+        updatedObj.id_card_copy = params[0];
+        updatedObj.id_card_file_name = params[1] || null;
+        updatedObj.id_card_mime_type = params[2] || null;
+        updatedObj.id_card_file_size = params[3] !== undefined && params[3] !== null ? Number(params[3]) : null;
       }
     }
 
@@ -868,6 +948,20 @@ export const query = async (text, params = []) => {
       return formatResult(c ? [c] : []);
     }
     return formatResult(store.guest_call_logs);
+  }
+
+  // 4b. Guest ID Cards Binary Queries
+  if (lowerSql.includes("from guest_id_cards")) {
+    const cards = store.guest_id_cards || [];
+    const targetList = lowerSql.includes("where guest_id = $1")
+      ? cards.filter((ic) => ic.guest_id === params[0])
+      : cards;
+    return formatResult(
+      targetList.map((ic) => ({
+        ...ic,
+        file_data: ic.file_data_base64 ? Buffer.from(ic.file_data_base64, "base64") : ic.file_data,
+      }))
+    );
   }
 
   // 5. Wedding Messages Queries (Admin & Client Chat)

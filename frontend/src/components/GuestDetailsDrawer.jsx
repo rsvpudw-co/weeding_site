@@ -18,9 +18,11 @@ import {
   Sparkles,
   Clock,
   Check,
+  Image as ImageIcon,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../services/api";
+import { getGuestIdCardMeta } from "../utils/idCardUtils";
 
 export default function GuestDetailsDrawer({
   guest,
@@ -52,13 +54,9 @@ export default function GuestDetailsDrawer({
 
   const isConfirmed = (guest.rsvp_status || "").toLowerCase() === "confirmed";
   const isIdReceived = (guest.id_card_received || "").toLowerCase() === "yes";
-  const isImage = guest.id_card_copy && guest.id_card_copy.startsWith("data:image");
-  const isPdf = guest.id_card_copy && (
-    guest.id_card_copy.includes(".pdf") ||
-    guest.id_card_copy.startsWith("data:application/pdf") ||
-    guest.id_card_copy.startsWith("data:application/x-pdf") ||
-    !isImage
-  );
+  const idCardMeta = getGuestIdCardMeta(guest);
+  const isImage = idCardMeta.isImage;
+  const isPdf = idCardMeta.isPdf;
   const guestSide = (guest.side || "Groom").toLowerCase();
   const callCount = Number(guest.call_count) || 0;
 
@@ -232,13 +230,12 @@ export default function GuestDetailsDrawer({
                             Call #{log.call_number || index + 1}
                           </span>
                           <span
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                              isPositive
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${isPositive
                                 ? "bg-emerald-50 text-emerald-800 border-emerald-200"
                                 : isDeclined
-                                ? "bg-rose-50 text-rose-800 border-rose-200"
-                                : "bg-amber-50 text-amber-800 border-amber-200"
-                            }`}
+                                  ? "bg-rose-50 text-rose-800 border-rose-200"
+                                  : "bg-amber-50 text-amber-800 border-amber-200"
+                              }`}
                           >
                             {log.call_outcome || "Connected"}
                           </span>
@@ -362,31 +359,27 @@ export default function GuestDetailsDrawer({
               <FileText className="w-4 h-4 text-emerald-600" />
               <span>ID Card Copy / Document Record</span>
             </div>
-            {guest.id_card_copy ? (
+            {idCardMeta.hasDocument ? (
               <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-2xs space-y-2">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2.5 overflow-hidden">
                     <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold shrink-0">
-                      <FileText className="w-4 h-4" />
+                      {isImage ? <ImageIcon className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
                     </div>
                     <div className="min-w-0">
                       <p className="text-xs font-bold text-slate-900 truncate">
-                        {isImage
-                          ? "ID_Card_Photo_Scan.png"
-                          : guest.id_card_copy.startsWith("data:")
-                          ? "Government_ID_Document.pdf"
-                          : guest.id_card_copy}
+                        {idCardMeta.fileName}
                       </p>
                       <p className="text-[10px] text-emerald-600 font-medium">
-                        Attached & Verified Document
+                        {isImage ? "Photo ID" : "PDF ID Document"} • {idCardMeta.fileSizeLabel}
                       </p>
                     </div>
                   </div>
 
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {guest.id_card_copy.startsWith("data:") && (
+                    {idCardMeta.viewUrl && (
                       <a
-                        href={guest.id_card_copy}
+                        href={idCardMeta.viewUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-semibold transition-colors"
@@ -396,10 +389,10 @@ export default function GuestDetailsDrawer({
                         <span>View</span>
                       </a>
                     )}
-                    {guest.id_card_copy.startsWith("data:") && (
+                    {idCardMeta.downloadUrl && (
                       <a
-                        href={guest.id_card_copy}
-                        download={`${(guest.guest_name || "Guest").replace(/\s+/g, "_")}_ID_Card.${isPdf ? "pdf" : "png"}`}
+                        href={idCardMeta.downloadUrl}
+                        download={idCardMeta.fileName}
                         className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors"
                         title="Download file"
                       >
@@ -410,25 +403,25 @@ export default function GuestDetailsDrawer({
                   </div>
                 </div>
 
-                {isImage && (
-                  <div className="mt-2 rounded-xl overflow-hidden border border-slate-200 max-h-48 bg-slate-100 flex items-center justify-center">
+                {isImage && idCardMeta.viewUrl && (
+                  <div className="mt-2 rounded-xl overflow-hidden border border-slate-200 max-h-56 bg-slate-100 flex items-center justify-center">
                     <img
-                      src={guest.id_card_copy}
+                      src={idCardMeta.viewUrl}
                       alt="ID Card Document"
-                      className="w-full h-full object-contain max-h-48"
+                      className="w-full h-full object-contain max-h-56"
                     />
                   </div>
                 )}
 
-                {isPdf && guest.id_card_copy.startsWith("data:") && (
-                  <div className="mt-2 rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
-                    <iframe
-                      src={guest.id_card_copy}
-                      title="ID Document PDF Preview"
-                      className="w-full h-56 border-0"
-                    />
-                  </div>
-                )}
+                  { isPdf && idCardMeta.isPdfPreviewable && idCardMeta.viewUrl && (
+                    <div className="mt-2 rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+                      <iframe
+                        src={idCardMeta.viewUrl}
+                        title="ID Document PDF Preview"
+                        className="w-full h-64 border-0"
+                      />
+                    </div>
+                  )}
               </div>
             ) : (
               <p className="text-slate-400 italic text-[11px]">

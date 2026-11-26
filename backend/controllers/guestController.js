@@ -1,4 +1,6 @@
 import { GuestModel } from "../models/guestModel.js";
+import { GuestIdCardModel } from "../models/guestIdCardModel.js";
+import { extractIdCardFromRequest } from "../utils/idCardHelper.js";
 import { GoogleSheetsService } from "../services/googleSheetsService.js";
 import { broadcastDataChange } from "../socket/chatSocket.js";
 import { loadUsersMeta } from "../models/userModel.js";
@@ -448,6 +450,151 @@ export const guestController = {
       res.status(500).json({
         success: false,
         message: "Failed to sync guest data",
+        error: error.message,
+      });
+    }
+  },
+
+  // POST/PUT /api/guests/:id/id-card
+  // Stores guest ID card (photo or PDF binary) directly inside PostgreSQL
+  async uploadGuestIdCard(req, res) {
+    try {
+      const userRole = String(req.headers["x-user-role"] || "").toLowerCase();
+      if (userRole === "call_center") {
+        return res.status(403).json({
+          success: false,
+          message: "Call center users have view-only access to guest details. They cannot upload ID cards.",
+        });
+      }
+
+      const { id } = req.params;
+      const guest = await GuestModel.getById(id);
+      if (!guest) {
+        return res.status(404).json({
+          success: false,
+          message: `Guest with ID ${id} not found`,
+        });
+      }
+
+      let parsedFile;
+      try {
+        parsedFile = extractIdCardFromRequest(req);
+      } catch (validationErr) {
+        return res.status(400).json({
+          success: false,
+          message: validationErr.message || "Invalid ID card file upload",
+        });
+      }
+
+      await GuestIdCardModel.saveForGuest(id, {
+        weddingId: guest.wedding_id || "wedding_01",
+        fileName: parsedFile.fileName,
+        mimeType: parsedFile.mimeType,
+        fileData: parsedFile.fileData,
+      });
+
+      const updatedGuest = await GuestModel.getById(id);
+
+      const io = req.app.get("io");
+      broadcastDataChange(io, {
+        event: "guests_updated",
+        weddingId: updatedGuest?.wedding_id || guest.wedding_id,
+        payload: { action: "id_card_uploaded", guest: updatedGuest },
+      });
+
+      res.status(200).json({
+        success: true,
+        message: "Guest ID card saved in PostgreSQL successfully",
+        data: updatedGuest,
+      });
+    } catch (error) {
+      console.error("Error uploading guest ID card:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to store guest ID card",
+        error: error.message,
+      });
+    }
+  },
+
+  // GET /api/guests/:id/id-card
+  // Serves stored photo or PDF binary directly from PostgreSQL
+  async getGuestIdCard(req, res) {
+    try {
+      const { id } = req.params;
+      const card = await GuestIdCardModel.getByGuestId(id);
+      if (!card || !card.file_data) {
+        return res.status(404).json({
+          success: false,
+          message: `No ID card stored for guest ${id}`,
+        });
+      }
+
+      const isDownload = req.query.download === "1" || req.query.download === "true";
+      const safeName = (card.file_name || `guest_${id}_id_card`).replace(/["\r\n]/g, "_");
+      const disposition = isDownload ? "attachment" : "inline";
+
+      res.setHeader("Content-Type", card.mime_type || "application/octet-stream");
+      res.setHeader("Content-Length", String(card.file_data.length));
+      res.setHeader(
+        "Content-Disposition",
+        `${disposition}; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(safeName)}`
+      );
+      res.setHeader("Cache-Control", "private, max-age=300");
+      res.status(200).send(card.file_data);
+    } catch (error) {
+      console.error("Error fetching guest ID card:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to retrieve guest ID card",
+        error: error.message,
+      });
+    }
+  },
+
+  // DELETE /api/guests/:id/id-card
+  async deleteGuestIdCard(req, res) {
+    try {
+      const userRole = String(req.headers["x-user-role"] || "").toLowerCase();
+      if (userRole === "call_center") {
+        return res.status(403).json({
+          success: false,
+          message: "Call center users have view-only access to guest details.",
+        });
+      }
+
+      const { id } = req.params;
+      const guest = await GuestModel.getById(id);
+      if (!guest) {
+        return res.status(404).json({
+          success: false,
+          message: `Guest with ID ${id} not found`,
+        });
+      }
+
+      await GuestIdCardModel.deleteByGuestId(id, {
+        markPending: req.query.markPending === "true",
+      });
+
+      const updatedGuest = await GuestModel.getById(id);
+
+      const io = req.app.get("io");
+      broadcastDataChange(io, {
+        event: "guests_updated",
+        weddingId: updatedGuest?.wedding_id || guest.wedding_id,
+        payload: { action: "id_card_deleted", guest: updatedGuest },
+      });
+
+      res.status(200).json({
+        success: true,
+        message: "Guest ID card removed from PostgreSQL",
+        data: updatedGuest,
+      });
+    } catch (error) {
+      console.error("Error deleting guest ID card:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to delete guest ID card",
         error: error.message,
       });
     }

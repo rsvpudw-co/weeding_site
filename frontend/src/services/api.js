@@ -829,19 +829,88 @@ export const api = {
     return calculateStatsFromList(list);
   },
 
+  async uploadGuestIdCard(guestId, file) {
+    if (getCurrentUserRole() === "call_center") {
+      throw new Error("Call Center desk has view-only access. Only Super Admin can upload ID cards.");
+    }
+    if (!guestId || !file) {
+      throw new Error("Guest ID and file are required to upload an ID card.");
+    }
+
+    const formData = new FormData();
+    formData.append("file", file, file.name || "guest_id_card");
+
+    const res = await fetch(`${API_BASE_URL}/guests/${guestId}/id-card`, {
+      method: "POST",
+      headers: {
+        "x-user-role": getCurrentUserRole() || "admin",
+      },
+      body: formData,
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(json.message || "Failed to store ID card in PostgreSQL database.");
+    }
+
+    const updatedGuest = json.data ? sanitizeGuestRecord(json.data) : null;
+    if (updatedGuest) {
+      const list = getCachedGuests();
+      const idx = list.findIndex((g) => g.id === guestId);
+      if (idx !== -1) {
+        list[idx] = { ...list[idx], ...updatedGuest };
+      } else {
+        list.push(updatedGuest);
+      }
+      setCachedGuests(list);
+    }
+    return updatedGuest;
+  },
+
+  async deleteGuestIdCard(guestId, markPending = false) {
+    if (getCurrentUserRole() === "call_center") {
+      throw new Error("Call Center desk has view-only access.");
+    }
+    const res = await fetch(`${API_BASE_URL}/guests/${guestId}/id-card?markPending=${markPending ? "true" : "false"}`, {
+      method: "DELETE",
+      headers: {
+        "x-user-role": getCurrentUserRole() || "admin",
+      },
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(json.message || "Failed to delete ID card.");
+    }
+    const updatedGuest = json.data ? sanitizeGuestRecord(json.data) : null;
+    if (updatedGuest) {
+      const list = getCachedGuests();
+      const idx = list.findIndex((g) => g.id === guestId);
+      if (idx !== -1) {
+        list[idx] = { ...list[idx], ...updatedGuest };
+        setCachedGuests(list);
+      }
+    }
+    return updatedGuest;
+  },
+
   async createGuest(guestData) {
     if (getCurrentUserRole() === "call_center") {
       throw new Error("Call Center desk has view-only access. Only Super Admin can register new guests.");
     }
+    const { _idCardFile, _removeIdCard, ...rawFields } = guestData || {};
     let created = null;
     const cleanGuestData = {
-      ...guestData,
-      call_count: guestData.call_count !== undefined && !isNaN(Number(guestData.call_count)) ? Number(guestData.call_count) : 0,
-      call_status: guestData.call_status && isNaN(Number(guestData.call_status)) ? guestData.call_status : "Not Called",
+      ...rawFields,
+      id_card_copy: _idCardFile || (rawFields.id_card_copy && String(rawFields.id_card_copy).startsWith("blob:"))
+        ? null
+        : rawFields.id_card_copy,
+      id_card_received: _idCardFile ? "Yes" : (rawFields.id_card_received || "No"),
+      call_count: rawFields.call_count !== undefined && !isNaN(Number(rawFields.call_count)) ? Number(rawFields.call_count) : 0,
+      call_status: rawFields.call_status && isNaN(Number(rawFields.call_status)) ? rawFields.call_status : "Not Called",
       last_call_summary:
-        guestData.last_call_summary &&
-        guestData.last_call_summary.trim().toLowerCase() !== (guestData.guest_name || "").trim().toLowerCase()
-          ? guestData.last_call_summary
+        rawFields.last_call_summary &&
+        rawFields.last_call_summary.trim().toLowerCase() !== (rawFields.guest_name || "").trim().toLowerCase()
+          ? rawFields.last_call_summary
           : null,
     };
     try {
@@ -858,8 +927,18 @@ export const api = {
         if (json.success && json.data) {
           created = sanitizeGuestRecord(json.data);
         }
+      } else if (_idCardFile) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.message || "Failed to save guest record before uploading ID card.");
       }
-    } catch (e) { }
+    } catch (e) {
+      if (_idCardFile) throw e;
+    }
+
+    if (created && _idCardFile) {
+      const withIdCard = await this.uploadGuestIdCard(created.id, _idCardFile);
+      if (withIdCard) created = withIdCard;
+    }
 
     const list = getCachedGuests();
     if (created) {
@@ -931,16 +1010,25 @@ export const api = {
     if (getCurrentUserRole() === "call_center") {
       throw new Error("Call Center desk has view-only access to guest details. Modifications are not permitted.");
     }
-    let cleanSummary = guestData.last_call_summary;
-    if (cleanSummary !== null && cleanSummary !== undefined && guestData.guest_name) {
+    const { _idCardFile, _removeIdCard, ...rawFields } = guestData || {};
+    let cleanSummary = rawFields.last_call_summary;
+    if (cleanSummary !== null && cleanSummary !== undefined && rawFields.guest_name) {
       const sStr = String(cleanSummary).trim().toLowerCase();
-      const nStr = String(guestData.guest_name).trim().toLowerCase();
+      const nStr = String(rawFields.guest_name).trim().toLowerCase();
       if (sStr.length > 0 && sStr === nStr) {
         cleanSummary = null;
       }
     }
     const cleanGuestData = {
-      ...guestData,
+      ...rawFields,
+      id_card_copy:
+        _removeIdCard && !_idCardFile
+          ? ""
+          : _idCardFile || (rawFields.id_card_copy && String(rawFields.id_card_copy).startsWith("blob:"))
+          ? undefined
+          : rawFields.id_card_copy,
+      remove_id_card: Boolean(_removeIdCard && !_idCardFile),
+      id_card_received: _idCardFile ? "Yes" : rawFields.id_card_received,
       last_call_summary: cleanSummary !== undefined ? cleanSummary : null,
     };
 
@@ -959,9 +1047,18 @@ export const api = {
         if (json.success && json.data) {
           updated = sanitizeGuestRecord(json.data);
         }
+      } else if (_idCardFile) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.message || "Failed to save guest record before uploading ID card.");
       }
     } catch (e) {
+      if (_idCardFile) throw e;
       console.warn("API updateGuest fetch notice:", e);
+    }
+
+    if (_idCardFile) {
+      const withIdCard = await this.uploadGuestIdCard(id, _idCardFile);
+      if (withIdCard) updated = withIdCard;
     }
 
     try {

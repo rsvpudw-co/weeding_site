@@ -20,9 +20,11 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Image as ImageIcon,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { animateStaggerIn } from "../utils/animations";
+import { getGuestIdCardMeta } from "../utils/idCardUtils";
 
 const getAvatarTheme = (name = "") => {
   const char = (name.charAt(0) || "G").toUpperCase();
@@ -50,6 +52,26 @@ export default function GuestTable({
 }) {
   const { isAdmin, isViewOnly, canEditGuests, canUpdateCallLogs, canSendWhatsApp } = useAuth();
   const showCallDesk = true;
+
+  const renderIdBadge = (guest, extraClass = "") => {
+    const meta = getGuestIdCardMeta(guest);
+    if (!meta.hasDocument) return null;
+    return (
+      <button
+        type="button"
+        onClick={() => onViewGuest && onViewGuest(guest)}
+        title={meta.isImage ? "View attached ID Photo" : "View attached ID PDF document"}
+        className={`text-[10px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-1.5 py-0.5 rounded-md inline-flex items-center gap-1 cursor-pointer transition-transform hover:scale-105 ${extraClass}`}
+      >
+        {meta.isImage ? (
+          <ImageIcon className="w-2.5 h-2.5 text-emerald-600" />
+        ) : (
+          <FileText className="w-2.5 h-2.5 text-[#FF6574]" />
+        )}
+        <span>{meta.isImage ? "ID Photo" : "ID PDF"}</span>
+      </button>
+    );
+  };
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -207,17 +229,7 @@ export default function GuestTable({
                         <span className="text-[10px] text-slate-400 italic">No phone</span>
                       )}
 
-                      {guest.id_card_copy && (
-                        <button
-                          type="button"
-                          onClick={() => onViewGuest && onViewGuest(guest)}
-                          className="text-[10px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-1.5 py-0.5 rounded flex items-center gap-0.5 cursor-pointer ml-auto"
-                          title="View attached ID Card / PDF"
-                        >
-                          <FileText className="w-2.5 h-2.5 text-[#FF6574]" />
-                          <span>ID PDF</span>
-                        </button>
-                      )}
+                      {renderIdBadge(guest, "ml-auto")}
                     </div>
                   </div>
                 </div>
@@ -474,32 +486,12 @@ export default function GuestTable({
                                 <MessageSquare className="w-3 h-3 stroke-[2.5]" />
                               </button>
                             )}
-                            {guest.id_card_copy && (
-                              <button
-                                type="button"
-                                onClick={() => onViewGuest && onViewGuest(guest)}
-                                title="View attached ID Card / PDF document"
-                                className="text-[10px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-1.5 py-0.2 rounded-md inline-flex items-center gap-1 cursor-pointer transition-transform hover:scale-105"
-                              >
-                                <FileText className="w-2.5 h-2.5 text-[#FF6574]" />
-                                <span>ID PDF</span>
-                              </button>
-                            )}
+                            {renderIdBadge(guest)}
                           </div>
                         ) : (
                           <div className="flex items-center gap-1.5 mt-0.5">
                             <span className="text-[10px] text-slate-400 italic">No phone</span>
-                            {guest.id_card_copy && (
-                              <button
-                                type="button"
-                                onClick={() => onViewGuest && onViewGuest(guest)}
-                                title="View attached ID Card / PDF document"
-                                className="text-[10px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-1.5 py-0.2 rounded-md inline-flex items-center gap-1 cursor-pointer transition-transform hover:scale-105"
-                              >
-                                <FileText className="w-2.5 h-2.5 text-[#FF6574]" />
-                                <span>ID PDF</span>
-                              </button>
-                            )}
+                            {renderIdBadge(guest)}
                           </div>
                         )}
                       </div>

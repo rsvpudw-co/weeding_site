@@ -836,7 +836,8 @@ export default function Hero() {
 
       if (editingGuest) {
         const updatedGuest = await api.updateGuest(editingGuest.id, payload);
-        const merged = { ...editingGuest, ...payload, ...(updatedGuest || {}) };
+        const { _idCardFile, _removeIdCard, ...cleanPayload } = payload;
+        const merged = { ...editingGuest, ...cleanPayload, ...(updatedGuest || {}) };
         setGuests((prev) =>
           prev.map((g) => (g.id === editingGuest.id ? merged : g))
         );

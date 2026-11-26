@@ -96,6 +96,9 @@ CREATE TABLE IF NOT EXISTS guests (
   
   -- ID Card & Logistics Documents
   id_card_copy TEXT DEFAULT NULL,
+  id_card_file_name VARCHAR(255) DEFAULT NULL,
+  id_card_mime_type VARCHAR(100) DEFAULT NULL,
+  id_card_file_size INT DEFAULT NULL,
   special_request TEXT DEFAULT NULL,
   
   -- Call Center Tracking & Checkpoints
@@ -111,6 +114,9 @@ CREATE TABLE IF NOT EXISTS guests (
 
 -- Ensure column exists if table was already created earlier
 ALTER TABLE guests ADD COLUMN IF NOT EXISTS relation VARCHAR(100) DEFAULT NULL;
+ALTER TABLE guests ADD COLUMN IF NOT EXISTS id_card_file_name VARCHAR(255) DEFAULT NULL;
+ALTER TABLE guests ADD COLUMN IF NOT EXISTS id_card_mime_type VARCHAR(100) DEFAULT NULL;
+ALTER TABLE guests ADD COLUMN IF NOT EXISTS id_card_file_size INT DEFAULT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_guests_wedding_id ON guests (wedding_id);
 CREATE INDEX IF NOT EXISTS idx_guests_guest_name ON guests (guest_name);
@@ -165,6 +171,30 @@ CREATE INDEX IF NOT EXISTS idx_wedding_messages_wedding_id ON wedding_messages (
 CREATE INDEX IF NOT EXISTS idx_wedding_messages_created_at ON wedding_messages (created_at);
 
 -- ---------------------------------------------------------
+-- 5c. Guest ID Cards Binary Storage Table (Photos & PDFs)
+-- ---------------------------------------------------------
+CREATE TABLE IF NOT EXISTS guest_id_cards (
+  id VARCHAR(64) PRIMARY KEY,
+  guest_id VARCHAR(64) UNIQUE NOT NULL,
+  wedding_id VARCHAR(64) DEFAULT 'wedding_01',
+  file_name VARCHAR(255) NOT NULL,
+  mime_type VARCHAR(100) NOT NULL,
+  file_size INT NOT NULL DEFAULT 0,
+  file_data BYTEA NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_guest_id_cards_guest_id ON guest_id_cards (guest_id);
+CREATE INDEX IF NOT EXISTS idx_guest_id_cards_wedding_id ON guest_id_cards (wedding_id);
+
+DROP TRIGGER IF EXISTS trigger_guest_id_cards_updated_at ON guest_id_cards;
+CREATE TRIGGER trigger_guest_id_cards_updated_at
+  BEFORE UPDATE ON guest_id_cards
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- ---------------------------------------------------------
 -- 6. Row Level Security (RLS) Policies for Public / Service Access
 -- ---------------------------------------------------------
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
@@ -172,6 +202,7 @@ ALTER TABLE weddings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guest_call_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wedding_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE guest_id_cards ENABLE ROW LEVEL SECURITY;
 
 -- Allow full access to all tables for authenticated/anon/service roles
 DO $$
@@ -190,6 +221,9 @@ BEGIN
 
   DROP POLICY IF EXISTS "Allow full access to wedding_messages" ON wedding_messages;
   CREATE POLICY "Allow full access to wedding_messages" ON wedding_messages FOR ALL USING (true) WITH CHECK (true);
+
+  DROP POLICY IF EXISTS "Allow full access to guest_id_cards" ON guest_id_cards;
+  CREATE POLICY "Allow full access to guest_id_cards" ON guest_id_cards FOR ALL USING (true) WITH CHECK (true);
 END $$;
 
 -- ---------------------------------------------------------

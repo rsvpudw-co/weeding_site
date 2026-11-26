@@ -374,6 +374,7 @@ export const WeddingModel = {
       store.weddings = store.weddings.filter((w) => w.id !== id);
       store.guests = (store.guests || []).filter((g) => g.wedding_id !== id);
       store.guest_call_logs = (store.guest_call_logs || []).filter((c) => c.wedding_id !== id);
+      store.guest_id_cards = (store.guest_id_cards || []).filter((ic) => ic.wedding_id !== id);
       store.messages = (store.messages || []).filter((m) => m.wedding_id !== id);
       // skip writing to disk on deletion to prevent file watchers restart
     }
@@ -390,6 +391,7 @@ export const WeddingModel = {
     // 2. Direct PostgreSQL cascading purge on DigitalOcean VM
     try {
       await pool.query("DELETE FROM wedding_messages WHERE wedding_id = $1", [id]).catch(() => {});
+      await pool.query("DELETE FROM guest_id_cards WHERE wedding_id = $1", [id]).catch(() => {});
       await pool.query("DELETE FROM guest_call_logs WHERE wedding_id = $1", [id]).catch(() => {});
       await pool.query("DELETE FROM guests WHERE wedding_id = $1", [id]).catch(() => {});
       await pool.query("DELETE FROM weddings WHERE id = $1", [id]);
