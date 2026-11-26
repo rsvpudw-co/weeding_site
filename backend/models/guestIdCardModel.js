@@ -13,8 +13,8 @@ export const GuestIdCardModel = {
 
     const validated = validateIdCardBuffer(fileData, mimeType, fileName);
     const cardId = `idcard_${crypto.randomUUID().slice(0, 12)}`;
-    const version = Date.now();
-    const descriptorUrl = `/api/guests/${guestId}/id-card?v=${version}`;
+    // Store clean filename in guests.id_card_copy rather than exposing internal API paths
+    const storedCopyLabel = validated.fileName;
 
     // 1. Upsert binary BYTEA directly in PostgreSQL
     await pool.query(
@@ -51,7 +51,7 @@ export const GuestIdCardModel = {
       WHERE id = $6`,
       [
         "Yes",
-        descriptorUrl,
+        storedCopyLabel,
         validated.fileName,
         validated.mimeType,
         validated.fileSize,
@@ -65,7 +65,7 @@ export const GuestIdCardModel = {
       store.guests[gIdx] = {
         ...store.guests[gIdx],
         id_card_received: "Yes",
-        id_card_copy: descriptorUrl,
+        id_card_copy: storedCopyLabel,
         id_card_file_name: validated.fileName,
         id_card_mime_type: validated.mimeType,
         id_card_file_size: validated.fileSize,
@@ -97,7 +97,8 @@ export const GuestIdCardModel = {
       id: cardId,
       guest_id: guestId,
       wedding_id: weddingId,
-      id_card_copy: descriptorUrl,
+      id_card_copy: storedCopyLabel,
+      has_id_card: true,
       id_card_received: "Yes",
       id_card_file_name: validated.fileName,
       id_card_mime_type: validated.mimeType,

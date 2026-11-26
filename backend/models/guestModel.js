@@ -5,6 +5,34 @@ import crypto from "crypto";
 import { GuestIdCardModel } from "./guestIdCardModel.js";
 import { parseDataUrl } from "../utils/idCardHelper.js";
 
+/**
+ * Mask any internal /api/guests/:id/id-card endpoint string so internal URLs
+ * are never exposed in API JSON responses or UI text while leaving DB rows untouched.
+ */
+export function sanitizeGuestPublicRecord(guest) {
+  if (!guest) return guest;
+  const rawCopy = String(guest.id_card_copy || "");
+  const isInternalEndpoint = /\/guests\/[^/]+\/id-card/i.test(rawCopy);
+  const hasStoredMime = Boolean(guest.id_card_mime_type);
+  const hasDataUri = rawCopy.trim().startsWith("data:");
+  const hasIdCardBinary = isInternalEndpoint || hasStoredMime || hasDataUri;
+
+  if (!isInternalEndpoint) {
+    return hasStoredMime || hasDataUri ? { ...guest, has_id_card: true } : guest;
+  }
+
+  const isImg = String(guest.id_card_mime_type || "").toLowerCase().startsWith("image/");
+  const safeName =
+    guest.id_card_file_name ||
+    (isImg ? "ID_Card_Photo.jpg" : "ID_Card_Document.pdf");
+
+  return {
+    ...guest,
+    id_card_copy: safeName,
+    has_id_card: hasIdCardBinary,
+  };
+}
+
 // Helper function to resolve and normalize guest side (Bride vs Groom vs Both)
 export function resolveGuestSide(sideVal, relationVal, defaultSide = "Groom") {
   if (sideVal !== undefined && sideVal !== null) {
@@ -433,7 +461,7 @@ export const GuestModel = {
     query += ` ORDER BY ${sortColumn} ${sortDirection}`;
 
     const { rows } = await pool.query(query, params);
-    return rows;
+    return (rows || []).map(sanitizeGuestPublicRecord);
   },
 
   // 2. Get guest by ID
@@ -444,13 +472,14 @@ export const GuestModel = {
         const { data } = await supabase.from("guests").select("*").eq("id", id).single();
         if (data) {
           const relation = data.relation !== undefined && data.relation !== null ? data.relation : (memoryGuest?.relation || null);
-          return { ...data, relation };
+          return sanitizeGuestPublicRecord({ ...data, relation });
         }
       } catch (e) { }
     }
 
     const { rows } = await pool.query("SELECT * FROM guests WHERE id = $1", [id]);
-    return rows[0] || memoryGuest || null;
+    const found = rows[0] || memoryGuest || null;
+    return sanitizeGuestPublicRecord(found);
   },
 
   // 3. Create a new guest
@@ -1074,7 +1103,7 @@ export const GuestModel = {
       return this.getById(id);
     }
 
-    return updatedResult || merged;
+    return sanitizeGuestPublicRecord(updatedResult || merged);
   },
 
   // 5. Delete a guest and their call logs

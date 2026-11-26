@@ -6,9 +6,10 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 import { guestController } from "../controllers/guestController.js";
-import { GuestModel } from "../models/guestModel.js";
+import { GuestModel, sanitizeGuestPublicRecord } from "../models/guestModel.js";
 import { GuestIdCardModel } from "../models/guestIdCardModel.js";
 import { validateIdCardBuffer, parseMultipartFile, parseDataUrl } from "../utils/idCardHelper.js";
+import { signJwt } from "../services/jwtService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -136,7 +137,10 @@ describe("Guest ID Card Photo & PDF Storage", () => {
     assert.deepEqual(parsed.fileData, PNG_BYTES);
   });
 
-  it("stores, serves, downloads, replaces (photo & PDF), and deletes guest ID cards", async () => {
+  it("stores, serves with auth protection, downloads, replaces (photo & PDF), masks internal URLs, and deletes guest ID cards", async () => {
+    const adminToken = signJwt({ id: "user_admin_01", role: "admin", wedding_id: "all" });
+    const otherWeddingToken = signJwt({ id: "marriage_wedding_99", role: "marriage_client", wedding_id: "wedding_99" });
+
     // 1. Create guest via inline Data URL (photo JPEG)
     const jpegDataUrl = `data:image/jpeg;base64,${JPEG_BYTES.toString("base64")}`;
     const createReq = createMockReq({
@@ -156,13 +160,36 @@ describe("Guest ID Card Photo & PDF Storage", () => {
     createdIds.push(guest.id);
 
     assert.equal(guest.id_card_received, "Yes");
-    assert.match(guest.id_card_copy, new RegExp(`^/api/guests/${guest.id}/id-card`));
+    assert.equal(guest.id_card_copy, "pan_card.jpg");
+    assert.equal(guest.has_id_card, true);
+    assert.doesNotMatch(String(guest.id_card_copy), /\/api\/guests/i);
     assert.equal(guest.id_card_mime_type, "image/jpeg");
     assert.equal(guest.id_card_file_name, "pan_card.jpg");
 
-    // 2. Serve stored photo inline
+    // 1b. Block unauthenticated direct URL access (401) and other-wedding access (403)
+    const unauthRes = createMockRes();
+    await guestController.getGuestIdCard(createMockReq({ params: { id: guest.id } }), unauthRes);
+    assert.equal(unauthRes.statusCode, 401);
+
+    const wrongWeddingRes = createMockRes();
+    await guestController.getGuestIdCard(
+      createMockReq({
+        params: { id: guest.id },
+        headers: { authorization: `Bearer ${otherWeddingToken}` },
+      }),
+      wrongWeddingRes
+    );
+    assert.equal(wrongWeddingRes.statusCode, 403);
+
+    // 2. Serve stored photo inline to authenticated admin
     const getPhotoRes = createMockRes();
-    await guestController.getGuestIdCard(createMockReq({ params: { id: guest.id } }), getPhotoRes);
+    await guestController.getGuestIdCard(
+      createMockReq({
+        params: { id: guest.id },
+        headers: { authorization: `Bearer ${adminToken}` },
+      }),
+      getPhotoRes
+    );
     assert.equal(getPhotoRes.statusCode, 200);
     assert.equal(getPhotoRes.getHeader("content-type"), "image/jpeg");
     assert.match(getPhotoRes.getHeader("content-disposition"), /^inline;/);
@@ -191,11 +218,16 @@ describe("Guest ID Card Photo & PDF Storage", () => {
     assert.equal(uploadPdfRes.statusCode, 200);
     assert.equal(uploadPdfRes.body.data.id_card_mime_type, "application/pdf");
     assert.equal(uploadPdfRes.body.data.id_card_file_name, "aadhaar_id.pdf");
+    assert.equal(uploadPdfRes.body.data.id_card_copy, "aadhaar_id.pdf");
 
     // 4. Download stored PDF binary with ?download=1
     const dlPdfRes = createMockRes();
     await guestController.getGuestIdCard(
-      createMockReq({ params: { id: guest.id }, query: { download: "1" } }),
+      createMockReq({
+        params: { id: guest.id },
+        query: { download: "1" },
+        headers: { authorization: `Bearer ${adminToken}` },
+      }),
       dlPdfRes
     );
     assert.equal(dlPdfRes.statusCode, 200);
@@ -244,8 +276,24 @@ describe("Guest ID Card Photo & PDF Storage", () => {
     assert.equal(delRes.body.data.id_card_received, "No");
 
     const missingRes = createMockRes();
-    await guestController.getGuestIdCard(createMockReq({ params: { id: guest.id } }), missingRes);
+    await guestController.getGuestIdCard(
+      createMockReq({
+        params: { id: guest.id },
+        headers: { authorization: `Bearer ${adminToken}` },
+      }),
+      missingRes
+    );
     assert.equal(missingRes.statusCode, 404);
+
+    // 8. Verify legacy /api/guests/.../id-card paths are masked before returning to UI
+    const masked = sanitizeGuestPublicRecord({
+      id: "guest_8ee9a90b",
+      id_card_copy: "/api/guests/guest_8ee9a90b/id-card?v=1795720256969",
+      id_card_mime_type: "application/pdf",
+      id_card_file_name: "guest_id.pdf",
+    });
+    assert.equal(masked.id_card_copy, "guest_id.pdf");
+    assert.equal(masked.has_id_card, true);
   });
 
   it("handles Data URL parsing cleanly and confirms schema.sql contains guest_id_cards", () => {

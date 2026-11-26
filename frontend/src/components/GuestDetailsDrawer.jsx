@@ -90,56 +90,72 @@ export default function GuestDetailsDrawer({
     setPreviewMime("");
     setPreviewError("");
 
-    if (!isOpen || !guest?.id || !idCardMeta.hasDocument || !idCardMeta.viewUrl) {
+    if (!isOpen || !guest?.id || !idCardMeta.hasDocument) {
       setLoadingPreview(false);
       return;
     }
 
     const targetUrl = idCardMeta.viewUrl;
-    if (targetUrl.startsWith("blob:")) {
+    if (targetUrl && targetUrl.startsWith("blob:")) {
       setPreviewSrc(targetUrl);
       setLoadingPreview(false);
       return;
     }
 
-    const isInlineOrLocalApi =
-      targetUrl.startsWith("data:") || String(guest.id_card_copy || "").includes("/id-card");
-
     const controller = new AbortController();
     let cancelled = false;
     setLoadingPreview(true);
 
-    fetch(targetUrl, { signal: controller.signal })
-      .then(async (res) => {
-        if (!res.ok) {
-          throw new Error(res.status === 404 ? "ID card file not found in database." : `Unable to load preview (HTTP ${res.status}).`);
+    const loadPreview = async () => {
+      try {
+        if (idCardMeta.hasBackendBinary) {
+          const { blobUrl, mimeType } = await api.fetchGuestIdCardBlob(guest.id, {
+            signal: controller.signal,
+          });
+          if (cancelled) {
+            URL.revokeObjectURL(blobUrl);
+            return;
+          }
+          blobUrlRef.current = blobUrl;
+          setPreviewMime(mimeType || "");
+          setPreviewSrc(blobUrl);
+          return;
         }
-        const blob = await res.blob();
-        if (cancelled) return;
-        const objectUrl = URL.createObjectURL(blob);
-        blobUrlRef.current = objectUrl;
-        setPreviewMime(blob.type || "");
-        setPreviewSrc(objectUrl);
-      })
-      .catch((err) => {
-        if (cancelled || err?.name === "AbortError") return;
-        if (!isInlineOrLocalApi && targetUrl.startsWith("http")) {
-          // External URL (legacy Google Drive / CDN link) fallback
+
+        if (targetUrl && targetUrl.startsWith("data:")) {
+          const res = await fetch(targetUrl, { signal: controller.signal });
+          const blob = await res.blob();
+          if (cancelled) return;
+          const objectUrl = URL.createObjectURL(blob);
+          blobUrlRef.current = objectUrl;
+          setPreviewMime(blob.type || "");
+          setPreviewSrc(objectUrl);
+          return;
+        }
+
+        if (targetUrl && targetUrl.startsWith("http")) {
           setPreviewSrc(targetUrl);
-        } else {
-          setPreviewError(err?.message || "Failed to load ID card preview.");
+          return;
         }
-      })
-      .finally(() => {
+
+        // Legacy filename-only record without stored binary file
+        setPreviewSrc("");
+      } catch (err) {
+        if (cancelled || err?.name === "AbortError") return;
+        setPreviewError(err?.message || "Failed to load ID card preview.");
+      } finally {
         if (!cancelled) setLoadingPreview(false);
-      });
+      }
+    };
+
+    loadPreview();
 
     return () => {
       cancelled = true;
       controller.abort();
       revokeBlob();
     };
-  }, [isOpen, guest?.id, guest?.id_card_copy, idCardMeta.viewUrl, previewRetryKey]);
+  }, [isOpen, guest?.id, guest?.id_card_copy, guest?.id_card_mime_type, idCardMeta.hasDocument, idCardMeta.hasBackendBinary, idCardMeta.viewUrl, previewRetryKey]);
 
   if (!isOpen || !guest) return null;
 
@@ -290,7 +306,7 @@ export default function GuestDetailsDrawer({
 
               {idCardMeta.hasDocument && (
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  {(previewSrc || idCardMeta.viewUrl) && (
+                  {previewSrc && (
                     <button
                       type="button"
                       onClick={() => setIsIdPreviewExpanded(true)}
@@ -301,9 +317,9 @@ export default function GuestDetailsDrawer({
                       <span>Full Preview</span>
                     </button>
                   )}
-                  {(previewSrc || idCardMeta.viewUrl) && (
+                  {previewSrc && (
                     <a
-                      href={previewSrc || idCardMeta.viewUrl}
+                      href={previewSrc}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-[11px] font-semibold transition-colors"
@@ -313,9 +329,9 @@ export default function GuestDetailsDrawer({
                       <span>Open Tab</span>
                     </a>
                   )}
-                  {idCardMeta.downloadUrl && (
+                  {(previewSrc || idCardMeta.downloadUrl) && (
                     <a
-                      href={idCardMeta.downloadUrl}
+                      href={previewSrc || idCardMeta.downloadUrl}
                       download={idCardMeta.fileName}
                       className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-semibold transition-colors"
                       title="Download ID card"
@@ -494,10 +510,10 @@ export default function GuestDetailsDrawer({
                           </span>
                           <span
                             className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${isPositive
-                                ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-                                : isDeclined
-                                  ? "bg-rose-50 text-rose-800 border-rose-200"
-                                  : "bg-amber-50 text-amber-800 border-amber-200"
+                              ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                              : isDeclined
+                                ? "bg-rose-50 text-rose-800 border-rose-200"
+                                : "bg-amber-50 text-amber-800 border-amber-200"
                               }`}
                           >
                             {log.call_outcome || "Connected"}
@@ -726,9 +742,9 @@ export default function GuestDetailsDrawer({
                   </a>
                 )}
 
-                {idCardMeta.downloadUrl && (
+                {(previewSrc || idCardMeta.downloadUrl) && (
                   <a
-                    href={idCardMeta.downloadUrl}
+                    href={previewSrc || idCardMeta.downloadUrl}
                     download={idCardMeta.fileName}
                     className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#1E3A8A] hover:bg-[#172554] text-white text-xs font-semibold"
                   >
