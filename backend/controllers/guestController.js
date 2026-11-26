@@ -3,6 +3,7 @@ import { GuestIdCardModel } from "../models/guestIdCardModel.js";
 import { extractIdCardFromRequest } from "../utils/idCardHelper.js";
 import { GoogleSheetsService } from "../services/googleSheetsService.js";
 import { broadcastDataChange } from "../socket/chatSocket.js";
+import { verifyJwt } from "../services/jwtService.js";
 import { loadUsersMeta } from "../models/userModel.js";
 
 // Helper for CSV escaping
@@ -518,9 +519,29 @@ export const guestController = {
   },
 
   // GET /api/guests/:id/id-card
-  // Serves stored photo or PDF binary directly from PostgreSQL
+  // Serves stored photo or PDF binary strictly to authenticated wedding session users
   async getGuestIdCard(req, res) {
     try {
+      const authHeader = String(req.headers.authorization || "");
+      const bearerToken = authHeader.startsWith("Bearer ")
+        ? authHeader.slice(7).trim()
+        : "";
+      const decoded = bearerToken ? verifyJwt(bearerToken) : null;
+      const isValidQuickToken =
+        !decoded &&
+        bearerToken &&
+        (bearerToken.startsWith("mock_admin_") ||
+          bearerToken.startsWith("mock_callcenter_") ||
+          bearerToken.startsWith("mock_client_") ||
+          bearerToken.startsWith("token_"));
+
+      if (!decoded && !isValidQuickToken) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication required to preview guest ID documents.",
+        });
+      }
+
       const { id } = req.params;
       const card = await GuestIdCardModel.getByGuestId(id);
       if (!card || !card.file_data) {
@@ -528,6 +549,33 @@ export const guestController = {
           success: false,
           message: `No ID card stored for guest ${id}`,
         });
+      }
+
+      // Enforce wedding scoping for client/call-center sessions
+      const callerRole = String(
+        decoded?.role || req.headers["x-user-role"] || ""
+      ).toLowerCase();
+      let callerWeddingId =
+        decoded?.wedding_id || req.headers["x-user-wedding-id"] || "";
+      if (!callerWeddingId && bearerToken.startsWith("mock_client_")) {
+        callerWeddingId = bearerToken
+          .replace(/^mock_client_/, "")
+          .replace(/_\d+$/, "");
+      }
+
+      if (
+        (callerRole === "marriage_client" || callerRole === "call_center") &&
+        callerWeddingId &&
+        callerWeddingId !== "all"
+      ) {
+        const cleanTarget = String(card.wedding_id || "").replace(/^wedding_/, "");
+        const cleanCaller = String(callerWeddingId).replace(/^wedding_/, "");
+        if (cleanTarget && cleanCaller && cleanTarget !== cleanCaller) {
+          return res.status(403).json({
+            success: false,
+            message: "Forbidden: You may only view ID cards for your assigned wedding.",
+          });
+        }
       }
 
       const isDownload = req.query.download === "1" || req.query.download === "true";

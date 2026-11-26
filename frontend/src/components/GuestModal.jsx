@@ -25,6 +25,7 @@ import {
   Heart,
   FileSpreadsheet,
 } from "lucide-react";
+import { api } from "../services/api";
 import { getGuestIdCardMeta, formatBytes, MAX_ID_CARD_FILE_BYTES } from "../utils/idCardUtils";
 
 const normalizeRsvp = (status) => {
@@ -123,6 +124,32 @@ export default function GuestModal({
           downloadUrl: meta.downloadUrl,
           size: meta.fileSizeLabel,
         });
+
+        if (meta.hasBackendBinary && initialData.id) {
+          const controller = new AbortController();
+          api
+            .fetchGuestIdCardBlob(initialData.id, { signal: controller.signal })
+            .then(({ blobUrl, mimeType }) => {
+              revokeObjectUrl();
+              objectUrlRef.current = blobUrl;
+              const fetchedIsImg = mimeType ? mimeType.startsWith("image/") : meta.isImage;
+              const fetchedIsPdf = mimeType ? mimeType.includes("pdf") : meta.isPdf;
+              setFileDetails((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      preview: fetchedIsImg ? blobUrl : null,
+                      isImage: fetchedIsImg,
+                      isPdf: fetchedIsPdf,
+                      viewUrl: blobUrl,
+                      downloadUrl: blobUrl,
+                    }
+                  : prev
+              );
+            })
+            .catch(() => {});
+          return () => controller.abort();
+        }
       } else {
         setFileDetails(null);
       }

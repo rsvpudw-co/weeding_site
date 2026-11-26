@@ -163,8 +163,18 @@ const sanitizeGuestRecord = (g) => {
     count = 0;
   }
 
+  let safeIdCopy = g.id_card_copy;
+  let hasIdCard = Boolean(g.has_id_card || g.id_card_mime_type);
+  if (safeIdCopy && /\/guests\/[^/]+\/id-card/i.test(String(safeIdCopy))) {
+    hasIdCard = true;
+    const isImg = String(g.id_card_mime_type || "").toLowerCase().startsWith("image/");
+    safeIdCopy = g.id_card_file_name || (isImg ? "ID_Card_Photo.jpg" : "ID_Card_Document.pdf");
+  }
+
   return {
     ...g,
+    id_card_copy: safeIdCopy,
+    has_id_card: hasIdCard || Boolean(safeIdCopy && String(safeIdCopy).trim().startsWith("data:")),
     last_call_summary: summary,
     call_status: status || "Not Called",
     call_count: count,
@@ -827,6 +837,37 @@ export const api = {
       list = list.filter((g) => g.wedding_id === weddingId);
     }
     return calculateStatsFromList(list);
+  },
+
+  async fetchGuestIdCardBlob(guestId, { signal } = {}) {
+    if (!guestId) throw new Error("Guest ID required");
+    const token = getAuthToken();
+    const authUser = getCurrentAuthUser();
+    const headers = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    if (authUser?.role) headers["x-user-role"] = authUser.role;
+    if (authUser?.id) headers["x-user-id"] = authUser.id;
+    if (authUser?.wedding_id) headers["x-user-wedding-id"] = authUser.wedding_id;
+
+    const res = await fetch(`${API_BASE_URL}/guests/${guestId}/id-card`, {
+      headers,
+      signal,
+    });
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        throw new Error("You do not have permission to view this ID card document.");
+      }
+      if (res.status === 404) {
+        throw new Error("ID card document not found.");
+      }
+      throw new Error("Unable to load ID card preview.");
+    }
+    const blob = await res.blob();
+    return {
+      blob,
+      blobUrl: URL.createObjectURL(blob),
+      mimeType: blob.type || "",
+    };
   },
 
   async uploadGuestIdCard(guestId, file) {
