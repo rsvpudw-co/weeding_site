@@ -257,5 +257,27 @@ describe("Guest ID Card Photo & PDF Storage", () => {
     const schemaSql = fs.readFileSync(path.resolve(__dirname, "../schema.sql"), "utf8");
     assert.match(schemaSql, /CREATE TABLE IF NOT EXISTS guest_id_cards/i);
     assert.match(schemaSql, /file_data BYTEA NOT NULL/i);
+    assert.doesNotMatch(schemaSql, /DROP TABLE|TRUNCATE/i);
+  });
+
+  it("preserves legacy guest data intact on read and non-ID-card edits", async () => {
+    const legacyGuest = await GuestModel.create({
+      wedding_id: "wedding_01",
+      guest_name: "Legacy Guest Name",
+      contact: "+91 99999 00000",
+      side: "Bride",
+      id_card_received: "Yes",
+      id_card_copy: "Passport_Scan_2025.pdf",
+    });
+    createdIds.push(legacyGuest.id);
+
+    // Updating another field preserves existing id_card_copy untouched
+    const updated = await GuestModel.update(legacyGuest.id, {
+      arrival_location: "Jaipur Airport",
+      id_card_copy: legacyGuest.id_card_copy,
+    });
+    assert.equal(updated.id_card_copy, "Passport_Scan_2025.pdf");
+    assert.equal(updated.id_card_received, "Yes");
+    assert.equal(updated.arrival_location, "Jaipur Airport");
   });
 });
