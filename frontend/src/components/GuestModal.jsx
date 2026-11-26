@@ -25,6 +25,7 @@ import {
   Heart,
   FileSpreadsheet,
 } from "lucide-react";
+import { getGuestIdCardMeta, formatBytes, MAX_ID_CARD_FILE_BYTES } from "../utils/idCardUtils";
 
 const normalizeRsvp = (status) => {
   if (!status) return "Confirmed";
@@ -68,9 +69,27 @@ export default function GuestModal({
   const [errors, setErrors] = useState({});
   const [isDragging, setIsDragging] = useState(false);
   const [fileDetails, setFileDetails] = useState(null);
+  const [selectedIdFile, setSelectedIdFile] = useState(null);
+  const [removeIdCard, setRemoveIdCard] = useState(false);
   const fileInputRef = useRef(null);
+  const objectUrlRef = useRef(null);
+
+  const revokeObjectUrl = () => {
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
+  };
 
   useEffect(() => {
+    return () => revokeObjectUrl();
+  }, []);
+
+  useEffect(() => {
+    revokeObjectUrl();
+    setSelectedIdFile(null);
+    setRemoveIdCard(false);
+
     if (initialData) {
       setFormData({
         sr_no: initialData.sr_no || "",
@@ -93,25 +112,16 @@ export default function GuestModal({
         special_request: initialData.special_request || "",
       });
 
-      if (initialData.id_card_copy) {
-        const isPdf =
-          initialData.id_card_copy.includes(".pdf") ||
-          initialData.id_card_copy.startsWith("data:application/pdf") ||
-          initialData.id_card_copy.startsWith("data:application/x-pdf");
-        const isImg = initialData.id_card_copy.startsWith("data:image");
-
-        let docName = "Government_ID_Document.pdf";
-        if (initialData.id_card_copy.startsWith("data:")) {
-          docName = `${(initialData.guest_name || "Guest").replace(/\s+/g, "_")}_ID_Card.${isPdf ? "pdf" : "png"}`;
-        } else {
-          docName = initialData.id_card_copy;
-        }
-
+      const meta = getGuestIdCardMeta(initialData);
+      if (meta.hasDocument) {
         setFileDetails({
-          name: docName,
-          preview: isImg ? initialData.id_card_copy : null,
-          isPdf: isPdf,
-          size: "Saved in Database",
+          name: meta.fileName,
+          preview: meta.isImage ? meta.viewUrl : null,
+          isPdf: meta.isPdf,
+          isImage: meta.isImage,
+          viewUrl: meta.viewUrl,
+          downloadUrl: meta.downloadUrl,
+          size: meta.fileSizeLabel,
         });
       } else {
         setFileDetails(null);
@@ -160,46 +170,45 @@ export default function GuestModal({
       file.type === "application/x-pdf" ||
       fileName.endsWith(".pdf");
     const isImage =
-      file.type.startsWith("image/") ||
+      (file.type.startsWith("image/") && !file.type.includes("svg")) ||
       fileName.endsWith(".png") ||
       fileName.endsWith(".jpg") ||
       fileName.endsWith(".jpeg") ||
-      fileName.endsWith(".webp");
+      fileName.endsWith(".webp") ||
+      fileName.endsWith(".gif") ||
+      fileName.endsWith(".bmp");
 
     if (!isPdf && !isImage) {
-      alert("Please upload a valid PDF document or Image file (PDF, PNG, JPG, WEBP).");
+      alert("Please upload a valid Photo (JPG, PNG, WEBP, GIF, BMP) or PDF document.");
       return;
     }
 
-    if (file.size > 15 * 1024 * 1024) {
-      alert("File size is too large (max 15 MB). Please choose a smaller document.");
+    if (file.size > MAX_ID_CARD_FILE_BYTES) {
+      alert("File size is too large (max 20 MB). Please choose a smaller document.");
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const resultDataUrl = event.target.result;
+    revokeObjectUrl();
+    const previewUrl = URL.createObjectURL(file);
+    objectUrlRef.current = previewUrl;
 
-      setFormData((prev) => ({
-        ...prev,
-        id_card_copy: resultDataUrl,
-        id_card_received: "Yes",
-      }));
+    setSelectedIdFile(file);
+    setRemoveIdCard(false);
+    setFormData((prev) => ({
+      ...prev,
+      id_card_copy: previewUrl,
+      id_card_received: "Yes",
+    }));
 
-      const formattedSize = file.size > 1024 * 1024
-        ? `${(file.size / (1024 * 1024)).toFixed(1)} MB`
-        : `${Math.round(file.size / 1024)} KB`;
-
-      setFileDetails({
-        name: file.name,
-        size: formattedSize,
-        preview: isImage ? resultDataUrl : null,
-        isPdf: isPdf,
-        dataUrl: resultDataUrl,
-      });
-    };
-
-    reader.readAsDataURL(file);
+    setFileDetails({
+      name: file.name,
+      size: formatBytes(file.size) || "Ready to upload",
+      preview: isImage ? previewUrl : null,
+      isPdf: isPdf,
+      isImage: isImage,
+      viewUrl: previewUrl,
+      downloadUrl: previewUrl,
+    });
   };
 
   const handleDragOver = (e) => {
@@ -230,7 +239,16 @@ export default function GuestModal({
   };
 
   const handleRemoveFile = () => {
-    setFormData((prev) => ({ ...prev, id_card_copy: "" }));
+    revokeObjectUrl();
+    setSelectedIdFile(null);
+    setRemoveIdCard(true);
+    setFormData((prev) => ({
+      ...prev,
+      id_card_copy: "",
+      id_card_file_name: "",
+      id_card_mime_type: "",
+      id_card_file_size: "",
+    }));
     setFileDetails(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -259,6 +277,8 @@ export default function GuestModal({
     onSubmit({
       ...formData,
       sr_no: cleanSrNo,
+      _idCardFile: selectedIdFile || null,
+      _removeIdCard: removeIdCard,
     });
   };
 
@@ -328,9 +348,8 @@ export default function GuestModal({
                     value={formData.guest_name}
                     onChange={handleChange}
                     placeholder="e.g. James Passaquindici"
-                    className={`w-full bg-white border rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#1E3A8A] shadow-2xs transition-all ${
-                      errors.guest_name ? "border-rose-400 bg-rose-50/30" : "border-slate-200"
-                    }`}
+                    className={`w-full bg-white border rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#1E3A8A] shadow-2xs transition-all ${errors.guest_name ? "border-rose-400 bg-rose-50/30" : "border-slate-200"
+                      }`}
                   />
                 </div>
                 {errors.guest_name && (
@@ -369,11 +388,10 @@ export default function GuestModal({
                   <button
                     type="button"
                     onClick={() => setFormData((prev) => ({ ...prev, side: "Bride" }))}
-                    className={`py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                      formData.side === "Bride"
+                    className={`py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${formData.side === "Bride"
                         ? "bg-rose-500 text-white shadow-xs"
                         : "bg-rose-50 text-rose-800 hover:bg-rose-100 border border-rose-200/70"
-                    }`}
+                      }`}
                   >
                     <span>👰</span>
                     <span>Bride's Side</span>
@@ -382,11 +400,10 @@ export default function GuestModal({
                   <button
                     type="button"
                     onClick={() => setFormData((prev) => ({ ...prev, side: "Groom" }))}
-                    className={`py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                      formData.side === "Groom"
+                    className={`py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${formData.side === "Groom"
                         ? "bg-sky-600 text-white shadow-xs"
                         : "bg-sky-50 text-sky-800 hover:bg-sky-100 border border-sky-200/70"
-                    }`}
+                      }`}
                   >
                     <span>🤵</span>
                     <span>Groom's Side</span>
@@ -444,11 +461,10 @@ export default function GuestModal({
                       key={rel}
                       type="button"
                       onClick={() => setFormData((prev) => ({ ...prev, relation: rel }))}
-                      className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold border transition-all cursor-pointer ${
-                        formData.relation === rel
+                      className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold border transition-all cursor-pointer ${formData.relation === rel
                           ? "bg-emerald-100 text-emerald-900 border-emerald-300 font-bold"
                           : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
-                      }`}
+                        }`}
                     >
                       +{rel}
                     </button>
@@ -482,11 +498,10 @@ export default function GuestModal({
                   <button
                     type="button"
                     onClick={() => setFormData((prev) => ({ ...prev, id_card_received: "Yes" }))}
-                    className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-2xs ${
-                      formData.id_card_received === "Yes"
+                    className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-2xs ${formData.id_card_received === "Yes"
                         ? "bg-[#eaf9bb] text-[#3b630a] border border-[#cbfa3b] font-bold"
                         : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
-                    }`}
+                      }`}
                   >
                     <span>✓ Received (Yes)</span>
                   </button>
@@ -494,11 +509,10 @@ export default function GuestModal({
                   <button
                     type="button"
                     onClick={() => setFormData((prev) => ({ ...prev, id_card_received: "No" }))}
-                    className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-2xs ${
-                      formData.id_card_received === "No"
+                    className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-2xs ${formData.id_card_received === "No"
                         ? "bg-slate-900 text-white border border-slate-900 font-bold"
                         : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
-                    }`}
+                      }`}
                   >
                     <span>✕ Pending (No)</span>
                   </button>
@@ -700,7 +714,7 @@ export default function GuestModal({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="application/pdf,image/png,image/jpeg,image/webp,image/jpg"
+                accept="application/pdf,.pdf,image/png,image/jpeg,image/webp,image/jpg,image/gif,image/bmp"
                 onChange={handleFileInputChange}
                 className="hidden"
               />
@@ -711,11 +725,10 @@ export default function GuestModal({
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop}
                   onClick={() => fileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all ${
-                    isDragging
+                  className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all ${isDragging
                       ? "border-[#FF6574] bg-[#FF6574]/10 scale-[1.01]"
                       : "border-slate-300 hover:border-[#1E3A8A] bg-[#f8fafc] hover:bg-slate-100"
-                  }`}
+                    }`}
                 >
                   <div className="w-12 h-12 rounded-2xl bg-white border border-slate-200/80 shadow-2xs flex items-center justify-center mx-auto text-emerald-700 mb-3">
                     <UploadCloud className="w-6 h-6 stroke-[2]" />
@@ -724,7 +737,7 @@ export default function GuestModal({
                     <span className="text-emerald-700 hover:underline">Click to upload</span> or drag and drop
                   </p>
                   <p className="text-[11px] text-slate-400 mt-1">
-                    PDF document, PNG, JPG, or WEBP (Passport, Aadhaar, Driving License, etc.)
+                    Photo (JPG, PNG, WEBP, GIF) or PDF document — stored securely in PostgreSQL (max 20 MB)
                   </p>
                 </div>
               ) : (
@@ -750,25 +763,24 @@ export default function GuestModal({
                       </p>
                       <p className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1.5">
                         <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                        {fileDetails?.size || "Document ready"} • {fileDetails?.isPdf ? "PDF File" : "Image File"}
+                        {fileDetails?.size || "Document ready"} • {fileDetails?.isPdf ? "PDF Document" : "Photo File"}
                       </p>
                     </div>
                   </div>
 
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {formData.id_card_copy && (
-                      <a
-                        href={formData.id_card_copy}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        download={fileDetails?.name || `ID_Card_${formData.guest_name || "Guest"}.${fileDetails?.isPdf ? "pdf" : "png"}`}
-                        className="px-2.5 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 hover:bg-emerald-100 text-[11px] font-bold flex items-center gap-1 transition-colors"
-                        title="View or download document"
-                      >
-                        <Eye className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>{fileDetails?.isPdf ? "View PDF" : "View"}</span>
-                      </a>
-                    )}
+                      { fileDetails?.viewUrl && (
+                        <a
+                          href={fileDetails.viewUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-2.5 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 hover:bg-emerald-100 text-[11px] font-bold flex items-center gap-1 transition-colors"
+                          title="Open document in new tab"
+                        >
+                          <Eye className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>{fileDetails?.isPdf ? "View PDF" : "View"}</span>
+                        </a>
+                      )}
                     <button
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
@@ -815,7 +827,7 @@ export default function GuestModal({
           >
             Cancel
           </button>
-          
+
           <button
             type="button"
             onClick={handleSubmit}

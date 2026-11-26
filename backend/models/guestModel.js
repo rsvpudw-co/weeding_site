@@ -2,6 +2,8 @@ import pool from "../Db_connection/dbconnection.js";
 import { supabase } from "../Db_connection/supabaseClient.js";
 import { store, saveGuestsToFile } from "../Db_connection/queries.js";
 import crypto from "crypto";
+import { GuestIdCardModel } from "./guestIdCardModel.js";
+import { parseDataUrl } from "../utils/idCardHelper.js";
 
 // Helper function to resolve and normalize guest side (Bride vs Groom vs Both)
 export function resolveGuestSide(sideVal, relationVal, defaultSide = "Groom") {
@@ -262,8 +264,8 @@ export const GuestModel = {
                   call_count: callCount,
                 })
                 .eq("id", g.id)
-                .then(() => {})
-                .catch(() => {});
+                .then(() => { })
+                .catch(() => { });
             }
             return updatedRow;
           });
@@ -444,7 +446,7 @@ export const GuestModel = {
           const relation = data.relation !== undefined && data.relation !== null ? data.relation : (memoryGuest?.relation || null);
           return { ...data, relation };
         }
-      } catch (e) {}
+      } catch (e) { }
     }
 
     const { rows } = await pool.query("SELECT * FROM guests WHERE id = $1", [id]);
@@ -482,6 +484,12 @@ export const GuestModel = {
       }
     }
 
+    const rawIdCardCopy = data.id_card_copy || null;
+    const inlineDataUrl =
+      rawIdCardCopy && String(rawIdCardCopy).trim().startsWith("data:")
+        ? parseDataUrl(rawIdCardCopy, data.id_card_file_name || `${data.guest_name || "Guest"}_ID_Card`)
+        : null;
+
     const newGuestRecord = {
       id,
       wedding_id: weddingId,
@@ -491,7 +499,7 @@ export const GuestModel = {
       side: resolveGuestSide(data.side, data.relation),
       relation: data.relation !== undefined && data.relation ? String(data.relation).trim() : null,
       rsvp_status: data.rsvp_status || "Confirmed",
-      id_card_received: data.id_card_received || "No",
+      id_card_received: inlineDataUrl ? "Yes" : (data.id_card_received || "No"),
       arrival_date: data.arrival_date || null,
       arrival_time: data.arrival_time || null,
       arrival_location: data.arrival_location || null,
@@ -500,14 +508,17 @@ export const GuestModel = {
       departure_time: data.departure_time || null,
       departure_location: data.departure_location || null,
       departure_flight_train_no: data.departure_flight_train_no || null,
-      id_card_copy: data.id_card_copy || null,
+      id_card_copy: inlineDataUrl ? null : rawIdCardCopy,
+      id_card_file_name: inlineDataUrl ? inlineDataUrl.fileName : (data.id_card_file_name || null),
+      id_card_mime_type: inlineDataUrl ? inlineDataUrl.mimeType : (data.id_card_mime_type || null),
+      id_card_file_size: inlineDataUrl ? inlineDataUrl.fileSize : (data.id_card_file_size || null),
       special_request: data.special_request || null,
       call_count: data.call_count !== undefined && !isNaN(Number(data.call_count)) ? Number(data.call_count) : 0,
       call_status: data.call_status && isNaN(Number(data.call_status)) ? data.call_status : "Not Called",
       last_called_at: data.last_called_at || null,
       last_call_summary:
         data.last_call_summary &&
-        data.last_call_summary.trim().toLowerCase() !== (data.guest_name || "").trim().toLowerCase()
+          data.last_call_summary.trim().toLowerCase() !== (data.guest_name || "").trim().toLowerCase()
           ? data.last_call_summary.trim()
           : null,
       created_at: new Date().toISOString(),
@@ -563,6 +574,14 @@ export const GuestModel = {
     ];
 
     await pool.query(query, values);
+    if (inlineDataUrl) {
+      await GuestIdCardModel.saveForGuest(id, {
+        weddingId,
+        fileName: inlineDataUrl.fileName,
+        mimeType: inlineDataUrl.mimeType,
+        fileData: inlineDataUrl.fileData,
+      });
+    }
     return this.getById(id);
   },
 
@@ -577,7 +596,7 @@ export const GuestModel = {
         if (existing && existing.length > 0) {
           nextSr = Math.max(...existing.map((g) => Number(g.sr_no) || 0)) + 1;
         }
-      } catch (e) {}
+      } catch (e) { }
     } else {
       const { rows: maxResult } = await pool.query(
         "SELECT COALESCE(MAX(sr_no), 0)::int AS \"maxSr\" FROM guests WHERE wedding_id = $1",
@@ -627,7 +646,7 @@ export const GuestModel = {
             delete supaPayload.relation;
             await supabase.from("guests").upsert(supaPayload);
           }
-        } catch (e) {}
+        } catch (e) { }
       }
 
       await pool.query(
@@ -695,6 +714,9 @@ export const GuestModel = {
         departure_location: r.departure_location || null,
         departure_flight_train_no: r.departure_flight_train_no || null,
         id_card_copy: r.id_card_copy || null,
+        id_card_file_name: r.id_card_file_name || null,
+        id_card_mime_type: r.id_card_mime_type || null,
+        id_card_file_size: r.id_card_file_size || null,
         special_request: r.special_request || null,
         call_count: r.call_count !== undefined && !isNaN(Number(r.call_count)) ? Number(r.call_count) : 0,
         call_status: r.call_status || "Not Called",
@@ -808,7 +830,7 @@ export const GuestModel = {
           .eq("sr_no", targetSr)
           .maybeSingle();
         if (data) return data;
-      } catch (e) {}
+      } catch (e) { }
     }
     const fromStore = (store.guests || []).find(
       (g) => g.wedding_id === weddingId && Number(g.sr_no) === targetSr
@@ -835,7 +857,7 @@ export const GuestModel = {
           .ilike("guest_name", clean)
           .maybeSingle();
         if (data) return data;
-      } catch (e) {}
+      } catch (e) { }
     }
     const fromStore = (store.guests || []).find(
       (g) => g.wedding_id === weddingId && String(g.guest_name || "").trim().toLowerCase() === clean
@@ -854,6 +876,18 @@ export const GuestModel = {
     const existing = await this.getById(id);
     if (!existing) return null;
 
+    const rawIdCard = data.id_card_copy;
+    const isNewInlineUpload =
+      Boolean(rawIdCard) &&
+      rawIdCard !== existing.id_card_copy &&
+      String(rawIdCard).trim().startsWith("data:");
+    const inlineDataUrl = isNewInlineUpload
+      ? parseDataUrl(rawIdCard, data.id_card_file_name || `${data.guest_name || existing.guest_name || "Guest"}_ID_Card`)
+      : null;
+    const shouldDeleteIdCard =
+      data.remove_id_card === true ||
+      (rawIdCard !== undefined && (rawIdCard === "" || rawIdCard === null) && Boolean(existing.id_card_copy));
+
     // Clean and validate every single field strictly according to schema
     const cleanRecord = {
       wedding_id: data.wedding_id !== undefined && data.wedding_id !== null ? String(data.wedding_id) : existing.wedding_id,
@@ -863,7 +897,11 @@ export const GuestModel = {
       side: data.side !== undefined && data.side ? resolveGuestSide(data.side, data.relation !== undefined ? data.relation : existing.relation) : (existing.side || "Groom"),
       relation: data.relation !== undefined ? (data.relation ? String(data.relation).trim() : null) : (existing.relation || null),
       rsvp_status: data.rsvp_status !== undefined && data.rsvp_status ? String(data.rsvp_status) : (existing.rsvp_status || "Confirmed"),
-      id_card_received: data.id_card_received !== undefined && data.id_card_received ? String(data.id_card_received) : (existing.id_card_received || "No"),
+      id_card_received: inlineDataUrl
+        ? "Yes"
+        : data.id_card_received !== undefined && data.id_card_received
+          ? String(data.id_card_received)
+          : existing.id_card_received || "No",
       arrival_date: data.arrival_date !== undefined ? (data.arrival_date || null) : existing.arrival_date,
       arrival_time: data.arrival_time !== undefined ? (data.arrival_time || null) : existing.arrival_time,
       arrival_location: data.arrival_location !== undefined ? (data.arrival_location || null) : existing.arrival_location,
@@ -872,7 +910,32 @@ export const GuestModel = {
       departure_time: data.departure_time !== undefined ? (data.departure_time || null) : existing.departure_time,
       departure_location: data.departure_location !== undefined ? (data.departure_location || null) : existing.departure_location,
       departure_flight_train_no: data.departure_flight_train_no !== undefined ? (data.departure_flight_train_no || null) : existing.departure_flight_train_no,
-      id_card_copy: data.id_card_copy !== undefined ? (data.id_card_copy || null) : existing.id_card_copy,
+      id_card_copy: inlineDataUrl
+        ? existing.id_card_copy || null
+        : rawIdCard !== undefined
+          ? (rawIdCard || null)
+          : existing.id_card_copy,
+      id_card_file_name: inlineDataUrl
+        ? inlineDataUrl.fileName
+        : shouldDeleteIdCard
+          ? null
+          : data.id_card_file_name !== undefined
+            ? data.id_card_file_name
+            : existing.id_card_file_name || null,
+      id_card_mime_type: inlineDataUrl
+        ? inlineDataUrl.mimeType
+        : shouldDeleteIdCard
+          ? null
+          : data.id_card_mime_type !== undefined
+            ? data.id_card_mime_type
+            : existing.id_card_mime_type || null,
+      id_card_file_size: inlineDataUrl
+        ? inlineDataUrl.fileSize
+        : shouldDeleteIdCard
+          ? null
+          : data.id_card_file_size !== undefined
+            ? data.id_card_file_size
+            : existing.id_card_file_size || null,
       special_request: data.special_request !== undefined ? (data.special_request || null) : existing.special_request,
       call_count: data.call_count !== undefined && data.call_count !== "" && !isNaN(Number(data.call_count)) ? Number(data.call_count) : (existing.call_count || 0),
       call_status: data.call_status !== undefined && data.call_status && isNaN(Number(data.call_status)) ? String(data.call_status) : (existing.call_status && isNaN(Number(existing.call_status)) ? existing.call_status : "Not Called"),
@@ -994,6 +1057,23 @@ export const GuestModel = {
       console.warn("Pool query update notice:", poolErr.message);
     }
 
+    if (inlineDataUrl) {
+      await GuestIdCardModel.saveForGuest(id, {
+        weddingId: cleanRecord.wedding_id,
+        fileName: inlineDataUrl.fileName,
+        mimeType: inlineDataUrl.mimeType,
+        fileData: inlineDataUrl.fileData,
+      });
+      return this.getById(id);
+    }
+
+    if (shouldDeleteIdCard) {
+      await GuestIdCardModel.deleteByGuestId(id, {
+        markPending: cleanRecord.id_card_received === "No",
+      });
+      return this.getById(id);
+    }
+
     return updatedResult || merged;
   },
 
@@ -1008,7 +1088,8 @@ export const GuestModel = {
       }
     }
 
-    await pool.query("DELETE FROM guest_call_logs WHERE guest_id = $1", [id]).catch(() => {});
+    await pool.query("DELETE FROM guest_id_cards WHERE guest_id = $1", [id]).catch(() => { });
+    await pool.query("DELETE FROM guest_call_logs WHERE guest_id = $1", [id]).catch(() => { });
     const result = await pool.query("DELETE FROM guests WHERE id = $1", [id]);
     return (result.rowCount || result.affectedRows) > 0;
   },
