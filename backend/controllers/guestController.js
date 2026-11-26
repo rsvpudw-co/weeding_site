@@ -534,6 +534,12 @@ export const guestController = {
       const safeName = (card.file_name || `guest_${id}_id_card`).replace(/["\r\n]/g, "_");
       const disposition = isDownload ? "attachment" : "inline";
 
+      res.removeHeader("X-Frame-Options");
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+      res.setHeader(
+        "Access-Control-Expose-Headers",
+        "Content-Disposition, Content-Type, Content-Length"
+      );
       res.setHeader("Content-Type", card.mime_type || "application/octet-stream");
       res.setHeader("Content-Length", String(card.file_data.length));
       res.setHeader(

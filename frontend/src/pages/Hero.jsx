@@ -121,6 +121,7 @@ export default function Hero() {
   const [isAddGuestModalOpen, setIsAddGuestModalOpen] = useState(false);
   const [editingGuest, setEditingGuest] = useState(null);
   const [viewingGuest, setViewingGuest] = useState(null);
+  const [expandIdCardOnView, setExpandIdCardOnView] = useState(false);
   const [deletingGuest, setDeletingGuest] = useState(null);
   const [callingGuest, setCallingGuest] = useState(null);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
@@ -1356,7 +1357,10 @@ export default function Hero() {
                   loading={loading}
                   onEditGuest={handleOpenEditGuestModal}
                   onDeleteGuest={(guest) => setDeletingGuest(guest)}
-                  onViewGuest={(guest) => setViewingGuest(guest)}
+                  onViewGuest={(guest, opts = {}) => {
+                    setExpandIdCardOnView(Boolean(opts?.expandIdPreview));
+                    setViewingGuest(guest);
+                  }}
                   onOpenCallLogs={handleOpenCallLogs}
                   onOpenQuickWhatsApp={(guest) => {
                     setWhatsAppModalInitialGuest(guest);
@@ -1462,7 +1466,11 @@ export default function Hero() {
       <GuestDetailsDrawer
         isOpen={Boolean(viewingGuest)}
         guest={viewingGuest}
-        onClose={() => setViewingGuest(null)}
+        initialExpandIdCard={expandIdCardOnView}
+        onClose={() => {
+          setViewingGuest(null);
+          setExpandIdCardOnView(false);
+        }}
         onEdit={canEditGuests ? (guest) => {
           setViewingGuest(null);
           handleOpenEditGuestModal(guest);

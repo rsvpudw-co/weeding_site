@@ -59,6 +59,9 @@ function createMockRes() {
     setHeader(k, v) {
       headers[k.toLowerCase()] = v;
     },
+    removeHeader(k) {
+      delete headers[k.toLowerCase()];
+    },
     getHeader(k) {
       return headers[k.toLowerCase()];
     },

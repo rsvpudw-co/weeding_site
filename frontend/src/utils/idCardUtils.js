@@ -1,4 +1,4 @@
-import { API_BASE_URL, BACKEND_SERVER_URL } from "../config/apiConfig";
+import { API_BASE_URL } from "../config/apiConfig";
 
 export const MAX_ID_CARD_FILE_BYTES = 20 * 1024 * 1024; // 20 MB
 
@@ -28,21 +28,23 @@ export function resolveIdCardUrl(guestOrUrl, { download = false } = {}) {
     return str;
   }
 
+  const cleanApiBase = String(API_BASE_URL || "").replace(/\/+$/, "");
   let resolved = str;
-    const isApiRelative = str.startsWith("/api/");
-    if (isApiRelative) {
-      resolved = `${BACKEND_SERVER_URL}${str}`;
-    } else if (str.startsWith("/")) {
-      resolved = `${API_BASE_URL}${str}`;
-    } else if (!str.startsWith("http://") && !str.startsWith("https://")) {
-      return "";
-    }
+  const isApiRelative = str.startsWith("/api/");
+  if (isApiRelative) {
+    // Strip leading "/api" so both localhost ("http://localhost:5000/api") and custom VITE_API_BASE_URL match
+    resolved = `${cleanApiBase}${str.slice(4)}`;
+  } else if (str.startsWith("/")) {
+    resolved = `${cleanApiBase}${str}`;
+  } else if (!str.startsWith("http://") && !str.startsWith("https://")) {
+    return "";
+  }
 
-      if (download && (isApiRelative || str.startsWith("/"))) {
-        return resolved.includes("?") ? `${resolved}&download=1` : `${resolved}?download=1`;
-      }
-      return resolved;
-    }
+  if (download && (isApiRelative || str.startsWith("/"))) {
+    return resolved.includes("?") ? `${resolved}&download=1` : `${resolved}?download=1`;
+  }
+  return resolved;
+}
 
     /**
      * Derive unified photo vs PDF metadata from guest record

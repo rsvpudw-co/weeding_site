@@ -59,8 +59,8 @@ export default function GuestTable({
     return (
       <button
         type="button"
-        onClick={() => onViewGuest && onViewGuest(guest)}
-        title={meta.isImage ? "View attached ID Photo" : "View attached ID PDF document"}
+        onClick={() => onViewGuest && onViewGuest(guest, { expandIdPreview: true })}
+        title={meta.isImage ? "Preview attached ID Photo" : "Preview attached ID PDF document"}
         className={`text-[10px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-1.5 py-0.5 rounded-md inline-flex items-center gap-1 cursor-pointer transition-transform hover:scale-105 ${extraClass}`}
       >
         {meta.isImage ? (
